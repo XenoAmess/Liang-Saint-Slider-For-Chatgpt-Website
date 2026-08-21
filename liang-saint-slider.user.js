@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.2
+// @version      1.0.3
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.2';
+  const VERSION = '1.0.3';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -99,8 +99,9 @@
    * 样式（一次性注入）
    * ---------------------------------------------------------------------- */
   const CSS = `
-.liangc-root{display:flex;flex-direction:column;gap:7px;padding:6px 6px 8px;width:100%;max-width:260px;box-sizing:border-box;color:inherit;font-family:inherit}
-.liangc-canvasWrap{position:relative;border-radius:10px;overflow:hidden;border:1px solid rgb(128 128 128/35%);background:#1d1918}
+.liangc-root{display:flex;flex-direction:column;gap:7px;padding:6px 6px 8px;width:232px;max-width:82vw;box-sizing:border-box;color:inherit;font-family:inherit;flex:none}
+.liangc-root>*{flex:none}
+.liangc-canvasWrap{position:relative;border-radius:10px;overflow:hidden;border:1px solid rgb(128 128 128/35%);background:#1d1918;flex:none}
 .liangc-canvas{width:100%;aspect-ratio:1/1;display:block}
 .liangc-canvasWrap::after{content:"";position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(0deg,rgb(255 255 255/2.5%) 0 1px,transparent 1px 4px),radial-gradient(circle at 22% 18%,rgb(255 255 255/8%) 0 1px,transparent 1.5px);background-size:auto,7px 7px;mix-blend-mode:soft-light;opacity:.35}
 .liangc-load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#b8b4a9;font-size:12px;line-height:18px}
@@ -113,6 +114,9 @@
 .liangc-marker{white-space:nowrap}
 .liangc-marker.is-current{color:#4d6bfe;font-weight:700;opacity:1}
 .liangc-native-hidden{display:none !important}
+/* ChatGPT 弹层常用 flex + 固定高度/overflow 裁剪内容，会把面板压成一条横带；
+   注入后给弹层祖先链打上这个类放宽限制，让完整人像露出来 */
+.liangc-relaxed{height:auto !important;max-height:calc(100vh - 16px) !important;overflow:visible !important}
 `;
 
   let stylesInjected = false;
@@ -202,19 +206,25 @@
     }
   }
 
-  let idlePreloadStarted = false;
-  function preloadAllWhenIdle() {
-    if (idlePreloadStarted) return;
-    idlePreloadStarted = true;
-    let next = 0;
-    const step = () => {
-      while (next <= LIANG_MAX_LEVEL && frameCache.has(next)) next += 1;
-      if (next > LIANG_MAX_LEVEL) return;
-      ensureFrame(next, () => {});
-      next += 1;
-      (window.requestIdleCallback || ((fn) => setTimeout(fn, 120)))(step);
-    };
-    (window.requestIdleCallback || ((fn) => setTimeout(fn, 120)))(step);
+  // 以当前档位为中心向外全量预载（面板一建成就开始，拖动时帧基本都已就位）
+  function preloadAll(center) {
+    for (let d = 0; d <= LIANG_MAX_LEVEL; d += 1) {
+      for (const n of [center - d, center + d]) {
+        if (n < 0 || n > LIANG_MAX_LEVEL) continue;
+        ensureFrame(n, () => {});
+      }
+    }
+  }
+
+  // 离 level 最近的已加载帧（拖动期间先画邻帧近似，精确帧加载完再换，视觉上零延迟）
+  function nearestLoadedFrame(level) {
+    for (let d = 0; d <= LIANG_MAX_LEVEL; d += 1) {
+      const down = frameCache.get(level - d);
+      if (down && down.complete && down.naturalWidth > 0) return down;
+      const up = frameCache.get(level + d);
+      if (up && up.complete && up.naturalWidth > 0) return up;
+    }
+    return null;
   }
 
   /** ------------------------------------------------------------------------
@@ -358,6 +368,13 @@
 
     let level = 0;
     let firstFrameShown = false;
+    const showFrame = (img) => {
+      draw(img);
+      if (!firstFrameShown) {
+        firstFrameShown = true;
+        loading.remove();
+      }
+    };
     const api = {
       root,
       setLevel(next, { commit }) {
@@ -369,13 +386,12 @@
         levelEl.textContent = `${String(level).padStart(2, '0')} / ${LIANG_MAX_LEVEL}`;
         const stageIndex = LIANG_STAGES.indexOf(stage);
         markerEls.forEach((marker, i) => marker.classList.toggle('is-current', i === stageIndex));
+        // 先同步画最近的已缓存帧（拖动跟手），精确帧就绪后再换上
+        const instant = nearestLoadedFrame(level);
+        if (instant) showFrame(instant);
         ensureFrame(level, (img) => {
           if (clampLevel(Math.round(level)) !== clampLevel(Math.round(Number(range.value)))) return;
-          draw(img);
-          if (!firstFrameShown) {
-            firstFrameShown = true;
-            loading.remove();
-          }
+          showFrame(img);
         });
         preloadNeighbors(level);
         if (commit) api.commit();
@@ -408,7 +424,7 @@
     range.addEventListener('pointerdown', (event) => event.stopPropagation());
 
     api.syncFromNative();
-    preloadAllWhenIdle();
+    preloadAll(level);
     return api;
   }
 
@@ -430,9 +446,18 @@
     const nativeRoot = nativeRootOf(sliderEl);
     if (!nativeRoot.parentElement) return;
 
+    const popover = sliderEl.closest(CONFIG.POPOVER_SELECTOR);
     const panel = buildPanel(native);
     nativeRoot.parentElement.insertBefore(panel.root, nativeRoot);
     nativeRoot.classList.add('liangc-native-hidden');
+
+    // 放宽弹层祖先链的高度/overflow 限制，防止面板被 flex 压缩或裁剪成横带
+    let ancestor = panel.root.parentElement;
+    while (ancestor) {
+      ancestor.classList.add('liangc-relaxed');
+      if (ancestor === popover) break;
+      ancestor = ancestor.parentElement;
+    }
 
     // 写一次与原生当前值相同的位置做自检；失败则回滚，免得把功能藏没
     if (!native.write(native.read())) {
@@ -534,6 +559,7 @@
     },
     restoreAll() {
       for (const el of document.querySelectorAll('.liangc-native-hidden')) el.classList.remove('liangc-native-hidden');
+      for (const el of document.querySelectorAll('.liangc-relaxed')) el.classList.remove('liangc-relaxed');
       for (const el of document.querySelectorAll('.liangc-root')) el.remove();
     },
   };

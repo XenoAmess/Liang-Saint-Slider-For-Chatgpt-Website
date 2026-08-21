@@ -22,6 +22,8 @@
   .row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 13px; }
   .row .adv { color: #6f6f6f; text-decoration: none; }
   .apply { border: 1px solid #d9d9d9; background: #fff; border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
+  /* 变体 C：模拟真实站点的苛刻弹层——flex 列布局 + 固定小高度 + overflow 裁剪 */
+  .popover-content.tight { display: flex; flex-direction: column; height: 96px; overflow: hidden; }
   .debug { max-width: 720px; margin: 24px auto; font-family: Consolas, monospace; font-size: 12px; color: #555; white-space: pre-wrap; }
   .hint { max-width: 720px; margin: 8px auto; font-size: 12px; color: #888; }
 </style>
@@ -53,6 +55,21 @@
   <div data-radix-popper-content-wrapper id="popB" hidden>
     <div class="popover-content">
       <input type="range" id="sliderB" min="0" max="3" step="1" value="2" aria-label="思考强度" style="width:100%">
+      <div class="row"><a class="adv" href="#">高级 ›</a><button class="apply">应用</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="composer">
+  <!-- 变体 C：苛刻弹层（flex + 固定高度 + overflow 裁剪）里的 Radix 式 role=slider -->
+  <button class="pill" id="pillC">5.6 Sol <span id="pillCEffort">高</span> ▾</button>
+  <div data-radix-popper-content-wrapper id="popC" hidden>
+    <div class="popover-content tight" id="popCContent">
+      <span class="mock-slider" id="sliderC">
+        <span class="mock-track"><span class="mock-range" id="rangeC"></span></span>
+        <span class="mock-thumb" id="thumbC" role="slider" tabindex="0"
+              aria-valuemin="0" aria-valuemax="3" aria-valuenow="2" aria-label="思考强度"></span>
+      </span>
       <div class="row"><a class="adv" href="#">高级 ›</a><button class="apply">应用</button></div>
     </div>
   </div>
@@ -104,6 +121,32 @@ const sliderB = document.getElementById('sliderB');
 const pillBEffort = document.getElementById('pillBEffort');
 sliderB.addEventListener('input', () => { pillBEffort.textContent = EFFORTS[Number(sliderB.value)]; });
 
+// 变体 C：苛刻弹层里的 Radix 风格滑杆
+setupPopover('pillC', 'popC');
+const thumbC = document.getElementById('thumbC');
+const rangeC = document.getElementById('rangeC');
+const pillCEffort = document.getElementById('pillCEffort');
+function renderC() {
+  const now = Number(thumbC.getAttribute('aria-valuenow'));
+  const max = Number(thumbC.getAttribute('aria-valuemax'));
+  rangeC.style.width = `${(now / max) * 100}%`;
+  pillCEffort.textContent = EFFORTS[now];
+}
+thumbC.addEventListener('keydown', (e) => {
+  const min = Number(thumbC.getAttribute('aria-valuemin'));
+  const max = Number(thumbC.getAttribute('aria-valuemax'));
+  let now = Number(thumbC.getAttribute('aria-valuenow'));
+  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') now = Math.min(max, now + 1);
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') now = Math.max(min, now - 1);
+  else if (e.key === 'Home') now = min;
+  else if (e.key === 'End') now = max;
+  else return;
+  e.preventDefault();
+  thumbC.setAttribute('aria-valuenow', String(now));
+  renderC();
+});
+renderC();
+
 // debug 面板：展示两个原生滑杆的实时值，便于确认被测脚本确实驱动了它们
 const debug = document.getElementById('debug');
 setInterval(() => {
@@ -117,6 +160,7 @@ const params = new URLSearchParams(location.search);
 if (params.get('open') === '1' || params.get('autotest') === '1') {
   document.getElementById('popA').hidden = false;
   document.getElementById('popB').hidden = false;
+  document.getElementById('popC').hidden = false;
 }
 if (params.get('autotest') === '1') {
   const results = [];
@@ -154,6 +198,15 @@ if (params.get('autotest') === '1') {
       // 人像帧与阶段标注
       check('panelA.stage', popA.querySelector('.liangc-stage')?.textContent, '梁圣');
       check('panelA.canvasDrawn', (popA.querySelector('.liangc-canvas')?.width || 0) > 0, true);
+      // 变体 C：苛刻弹层（flex + 固定高度 + overflow 裁剪）下面板必须完整展开
+      const popC = document.getElementById('popC');
+      const popCContent = document.getElementById('popCContent');
+      check('panelC.injected', !!popC.querySelector('.liangc-root'), true);
+      check('panelC.ancestorRelaxed', popCContent.classList.contains('liangc-relaxed'), true);
+      const canvasWrapC = popC.querySelector('.liangc-canvasWrap');
+      check('panelC.canvasNotSquished', canvasWrapC ? canvasWrapC.clientHeight > 100 : -1, true);
+      setLiang(popC, 30);
+      check('driveC.max', thumbC.getAttribute('aria-valuenow'), '3');
     } catch (err) {
       results.push(`EXCEPTION:${err && err.message}`);
     }
