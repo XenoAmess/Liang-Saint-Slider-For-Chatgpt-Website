@@ -37,14 +37,20 @@ ChatGPT 改版导致失效时，通常只需修改脚本顶部 `CONFIG` 里的�
 
 ```js
 window.__liang.rescan()      // 手动重扫
+window.__liang.probe()       // 列出页面全部滑杆候选及状态（校准选择器时反馈给作者）
 window.__liang.restoreAll()  // 还原所有被替换的原生滑杆
-window.__liang.CONFIG        // 查看/修改配置
+window.__liang.CONFIG        // 查看/修改配置（选择器、帧源、徽章开关等）
 ```
 
 ## 故障排查
 
-- **Tampermonkey 菜单显示「此脚本还未被执行」**：多半是脚本安装/更新后标签页没刷新，按 F5 重新加载 chatgpt.com 即可。chatgpt.com 的 CSP 很严格，因此本脚本（≥1.0.1）通过 `GM_addStyle` / `GM_xmlhttpRequest` 在 Tampermonkey 沙箱中运行并加载帧素材，绕开页面 `script-src` / `img-src` 限制——请确认 Tampermonkey 里脚本是用 v1.0.1+ 的完整头部重新保存的。
-- **弹层打开了但滑杆没变化**：ChatGPT 可能改了 DOM。打开控制台执行 `window.__liang.rescan()` 手动重扫；仍无效就把弹层结构反馈给作者，调整脚本顶部 `CONFIG` 的选择器即可。
+Tampermonkey 菜单显示「此脚本还未被执行」时，按顺序排查：
+
+1. **整页硬刷新（Ctrl+Shift+R）**。chatgpt.com 是单页应用，脚本安装/更新后已打开的标签页不会补注入，只在站内点来点去（SPA 跳转）也不会触发——这是最常见的原因。
+2. **确认 Chrome 允许运行用户脚本**：`chrome://extensions` 打开「开发者模式」（MV3 版 Tampermonkey 必需；部分版本是 Tampermonkey 详情页里的「允许用户脚本」开关）。
+3. **看注入信标**（v1.0.2+）：刷新后页面右下角应闪现「滑动变祖器 vX.X.X 已注入」徽章，控制台（F12）过滤 `滑动变祖器` 应看到 `已注入` 日志。两者都没有 → 注入层面被拦，回到第 1、2 步。
+4. **徽章有但滑杆没变** → ChatGPT 的实际 DOM 与选择器不匹配。控制台执行 `__liang.probe()`，把输出截图发给作者即可校准。
+5. **确认脚本版本**：管理面板里的 `@version` 应 ≥ 1.0.2。直接用 [raw 安装链接](https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js) 安装可让 Tampermonkey 自动更新。
 
 ## 本地开发
 

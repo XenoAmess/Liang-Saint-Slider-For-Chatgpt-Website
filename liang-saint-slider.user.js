@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.1
+// @version      1.0.2
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -15,7 +15,7 @@
 // @connect      cdn.jsdelivr.net
 // @connect      raw.githubusercontent.com
 // @connect      lichtspektrum.github.io
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // ==/UserScript==
 
@@ -68,6 +68,8 @@
     MAX_POPOVER_WIDTH: 520,
     // 轮询/MutationObserver 的去抖间隔（ms）
     SCAN_DEBOUNCE: 60,
+    // 注入成功后在页面右下角闪现一个徽章（调试期确认脚本真的跑了；嫌烦改 false）
+    SHOW_BOOT_BADGE: true,
   };
   if (typeof window !== 'undefined' && typeof window.__LIANG_FRAME_BASE__ === 'string') {
     CONFIG.FRAME_BASES.unshift(window.__LIANG_FRAME_BASE__);
@@ -80,6 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
+  const VERSION = '1.0.2';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -483,18 +486,59 @@
     observer.observe(document.body, { childList: true, subtree: true });
     // 兜底：某些极端情况下 observer 错过（如 shadow/portal 怪癖），低频轮询
     setInterval(scan, 2500);
+    showBootBadge();
+  }
+
+  // 注入信标：右下角闪现徽章，用来一眼区分「脚本没跑」和「跑了但没匹配到滑杆」
+  function showBootBadge() {
+    if (!CONFIG.SHOW_BOOT_BADGE) return;
+    try {
+      const badge = document.createElement('div');
+      badge.textContent = `滑动变祖器 v${VERSION} 已注入`;
+      badge.style.cssText =
+        'position:fixed;right:12px;bottom:12px;z-index:2147483647;background:#1d1918;color:#d8d4c9;' +
+        'font:12px/1.5 -apple-system,"Segoe UI",sans-serif;padding:6px 10px;border-radius:8px;' +
+        'box-shadow:0 2px 10px rgb(0 0 0/25%);opacity:.9;pointer-events:none;transition:opacity .4s';
+      (document.body || document.documentElement).appendChild(badge);
+      setTimeout(() => {
+        badge.style.opacity = '0';
+        setTimeout(() => badge.remove(), 500);
+      }, 2400);
+    } catch {
+      /* 徽章只是调试信标，失败不影响主流程 */
+    }
   }
 
   // 沙箱里 window 是隔离世界的，调试接口挂到页面 window 上才能在控制台访问
   const debugHost = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   debugHost.__liang = {
+    version: VERSION,
     CONFIG,
     rescan: scan,
+    // 探测当前页面所有滑杆候选及其状态，反馈给作者校准时用
+    probe() {
+      const report = [...document.querySelectorAll(CONFIG.SLIDER_SELECTOR)].map((el, i) => ({
+        i,
+        kind: el.getAttribute('role') === 'slider' ? 'aria-slider' : el.tagName.toLowerCase(),
+        min: el.getAttribute('aria-valuemin') ?? el.min ?? null,
+        max: el.getAttribute('aria-valuemax') ?? el.max ?? null,
+        now: el.getAttribute('aria-valuenow') ?? el.value ?? null,
+        inPopover: !!el.closest(CONFIG.POPOVER_SELECTOR),
+        enhanced: enhancedSliders.has(el),
+        isOurs: !!el.closest('.liangc-root'),
+      }));
+      console.log(`${TAG} 探测到 ${report.length} 个滑杆候选：`);
+      if (console.table) console.table(report);
+      else console.log(report);
+      return report;
+    },
     restoreAll() {
       for (const el of document.querySelectorAll('.liangc-native-hidden')) el.classList.remove('liangc-native-hidden');
       for (const el of document.querySelectorAll('.liangc-root')) el.remove();
     },
   };
+
+  console.log(`${TAG} 已注入 v${VERSION}，等待思考弹层出现…（控制台可用 __liang.probe() 自检）`);
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true });
