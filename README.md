@@ -47,10 +47,10 @@ window.__liang.CONFIG        // 查看/修改配置（选择器、帧源、徽�
 Tampermonkey 菜单显示「此脚本还未被执行」时，按顺序排查：
 
 1. **整页硬刷新（Ctrl+Shift+R）**。chatgpt.com 是单页应用，脚本安装/更新后已打开的标签页不会补注入，只在站内点来点去（SPA 跳转）也不会触发——这是最常见的原因。
-2. **确认 Chrome 允许运行用户脚本**：`chrome://extensions` 打开「开发者模式」（MV3 版 Tampermonkey 必需；部分版本是 Tampermonkey 详情页里的「允许用户脚本」开关）。
-3. **看注入信标**（v1.0.2+）：刷新后页面右下角应闪现「滑动变祖器 vX.X.X 已注入」徽章，控制台（F12）过滤 `滑动变祖器` 应看到 `已注入` 日志。两者都没有 → 注入层面被拦，回到第 1、2 步。
-4. **徽章有但滑杆没变** → ChatGPT 的实际 DOM 与选择器不匹配。控制台执行 `__liang.probe()`，把输出截图发给作者即可校准。
-5. **确认脚本版本**：管理面板里的 `@version` 应 ≥ 1.0.2。直接用 [raw 安装链接](https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js) 安装可让 Tampermonkey 自动更新。
+2. **确认 Chrome 允许运行用户脚本**：`chrome://extensions` 打开「开发者模式」（MV3 版 Tampermonkey 必需；部分版本是 Tampermonkey 详情页里的「允许用户脚本」开关）。**没开的话 Tampermonkey 只能用内联 `<script>` 兜底注入，会被 chatgpt.com 的 CSP 直接拦截**——控制台里出现来自 `content.js` 的 `Executing inline script violates ... script-src-elem` 报错就是这个症状。
+3. **确认脚本版本 ≥ 1.0.1**（管理面板里看 `@version`）：v1.0.0 是 `@grant none`，必然走页面内联注入，同样撞 CSP。最稳妥的做法是删掉旧脚本，用 [raw 安装链接](https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js) 重装（还能获得自动更新）。
+4. **看注入信标**（v1.0.2+）：刷新后页面右下角应闪现「滑动变祖器 vX.X.X 已注入」徽章，控制台（F12）过滤 `滑动变祖器` 应看到 `已注入` 日志。两者都没有 → 注入层面被拦，回到第 1~3 步。
+5. **徽章有但滑杆没变** → ChatGPT 的实际 DOM 与选择器不匹配。控制台执行 `__liang.probe()`，把输出截图发给作者即可校准。
 
 ## 本地开发
 
