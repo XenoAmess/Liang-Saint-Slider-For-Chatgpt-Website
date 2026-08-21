@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.5
+// @version      1.0.6
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.5';
+  const VERSION = '1.0.6';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -114,7 +114,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
 .liangc-markers{display:flex;justify-content:space-between;gap:4px;opacity:.65;font-size:11px;line-height:16px;padding:0 2px}
 .liangc-marker{white-space:nowrap}
 .liangc-marker.is-current{color:#4d6bfe;font-weight:700;opacity:1}
-.liangc-native-hidden{display:none !important}
+.liangc-native-hidden{opacity:0 !important;pointer-events:none !important}
 /* ChatGPT 弹层常用 flex + 固定高度/overflow 裁剪内容，会把面板压成一条横带；
    注入后给弹层祖先链打上这个类放宽限制，让完整人像露出来；
    min-width 负责把弹层卡片撑到能装下 232px 面板，避免内容探出右边框 */
@@ -286,6 +286,84 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
       const step = 1;
       const stops = max - min <= 64 ? Math.round(max - min) + 1 : 0;
       const readFrom = (el) => num(el.getAttribute('aria-valuenow'), min);
+
+      // 策略 1：Radix 式键盘步进（focus + Home/End 粗跳 + 方向键微调）
+      const driveByKeyboard = (el, target) => {
+        try {
+          el.focus({ preventScroll: true });
+        } catch {
+          el.focus();
+        }
+        const press = (key) =>
+          el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
+        let current = readFrom(el);
+        if (current === target) return true;
+        if (target === min) {
+          press('Home');
+          if (readFrom(el) === target) return true;
+        } else if (target === max) {
+          press('End');
+          if (readFrom(el) === target) return true;
+        }
+        let guard = 0;
+        while (guard++ < 96) {
+          current = readFrom(el);
+          if (current === target) return true;
+          press(current < target ? 'ArrowRight' : 'ArrowLeft');
+          let after = readFrom(el);
+          if (after === current) {
+            press(current < target ? 'ArrowUp' : 'ArrowDown');
+            after = readFrom(el);
+            if (after === current) return false; // 键盘驱动无效
+          }
+        }
+        return readFrom(el) === target;
+      };
+
+      // 策略 2：模拟指针。ChatGPT 的滑杆未必响应键盘——多数自定义滑杆反而
+      // 只认 pointer/mouse。先按轨道比例位置直接点（jump-to-position 实现），
+      // 不行再按住 thumb 拖过去。指针和鼠标事件成对发，兼容两种监听习惯。
+      const firePointer = (el, type, x, y, buttons) => {
+        const init = {
+          bubbles: true, cancelable: true, composed: true, view: window,
+          pointerId: 1, pointerType: 'mouse', isPrimary: true,
+          clientX: x, clientY: y, button: 0, buttons,
+        };
+        el.dispatchEvent(new PointerEvent(type, init));
+        el.dispatchEvent(new MouseEvent(type.replace('pointer', 'mouse'), init));
+      };
+      const pickTrack = (el) => {
+        // 从 thumb 向上找第一条「像轨道」的宽祖先（不越过弹层）
+        let node = el;
+        while (node.parentElement && node.parentElement !== popover) {
+          if (node.parentElement.getBoundingClientRect().width >= 100) return node.parentElement;
+          node = node.parentElement;
+        }
+        return el.parentElement || el;
+      };
+      const driveByPointer = (el, target) => {
+        const track = pickTrack(el);
+        const rect = track.getBoundingClientRect();
+        if (rect.width < 10) return false;
+        const ratio = Math.max(0, Math.min(1, (target - min) / (max - min)));
+        const x = rect.left + ratio * rect.width;
+        const y = rect.top + rect.height / 2;
+        // 试 1：轨道上直接点
+        firePointer(track, 'pointerdown', x, y, 1);
+        firePointer(track, 'pointerup', x, y, 0);
+        if (readFrom(el) === target) return true;
+        // 试 2：按住 thumb 拖到目标位置
+        const thumbRect = el.getBoundingClientRect();
+        const sx = thumbRect.left + thumbRect.width / 2;
+        const sy = thumbRect.top + thumbRect.height / 2;
+        firePointer(el, 'pointerdown', sx, sy, 1);
+        for (let i = 1; i <= 4; i += 1) {
+          firePointer(el, 'pointermove', sx + ((x - sx) * i) / 4, sy, 1);
+        }
+        firePointer(el, 'pointerup', x, sy, 0);
+        return readFrom(el) === target;
+      };
+
       return {
         min, max, step, stops,
         read: () => {
@@ -295,35 +373,9 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         write: (target) => {
           const el = resolveNativeSlider(popover);
           if (!el || !el.isConnected) return false;
-          // Radix 式滑杆：聚焦 thumb 后用键盘步进（Home/End 粗跳 + 方向键微调）
-          try {
-            el.focus({ preventScroll: true });
-          } catch {
-            el.focus();
-          }
-          const press = (key) =>
-            el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
-          let guard = 0;
-          let current = readFrom(el);
-          if (current === target) return true;
-          if (target === min) {
-            press('Home');
-            if (readFrom(el) === target) return true;
-          } else if (target === max) {
-            press('End');
-            if (readFrom(el) === target) return true;
-          }
-          while (guard++ < 96) {
-            current = readFrom(el);
-            if (current === target) return true;
-            press(current < target ? 'ArrowRight' : 'ArrowLeft');
-            let after = readFrom(el);
-            if (after === current) {
-              press(current < target ? 'ArrowUp' : 'ArrowDown');
-              after = readFrom(el);
-              if (after === current) return false; // 键盘驱动无效
-            }
-          }
+          if (readFrom(el) === target) return true;
+          if (driveByKeyboard(el, target)) return true;
+          if (driveByPointer(el, target)) return true;
           return readFrom(el) === target;
         },
       };
@@ -398,6 +450,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
 
     let level = 0;
     let firstFrameShown = false;
+    let driveWarned = false; // 驱动失败告警只报一次，避免刷屏
     const showFrame = (img) => {
       draw(img);
       if (!firstFrameShown) {
@@ -435,7 +488,12 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
           target = native.min + (level / LIANG_MAX_LEVEL) * (native.max - native.min);
         }
         const ok = native.write(target);
-        if (!ok) console.warn(TAG, '驱动原生滑杆失败，已跳过本次写入');
+        if (!ok && !driveWarned) {
+          driveWarned = true;
+          console.warn(TAG, '驱动原生滑杆失败，已跳过本次写入（后续拖动会自动重试）');
+        } else if (ok) {
+          driveWarned = false;
+        }
         return ok;
       },
       syncFromNative() {

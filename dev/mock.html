@@ -75,6 +75,21 @@
   </div>
 </div>
 
+<div class="composer">
+  <!-- 变体 D：只认指针事件的滑杆（无键盘支持，点轨道跳档） -->
+  <button class="pill" id="pillD">5.6 Sol <span id="pillDEffort">高</span> ▾</button>
+  <div data-radix-popper-content-wrapper id="popD" hidden>
+    <div class="popover-content">
+      <span class="mock-slider" id="sliderD">
+        <span class="mock-track"><span class="mock-range" id="rangeD"></span></span>
+        <span class="mock-thumb" id="thumbD" role="slider" tabindex="0"
+              aria-valuemin="0" aria-valuemax="3" aria-valuenow="2" aria-label="思考强度"></span>
+      </span>
+      <div class="row"><a class="adv" href="#">高级 ›</a><button class="apply">应用</button></div>
+    </div>
+  </div>
+</div>
+
 <div class="debug" id="debug">debug: —</div>
 <div class="debug" id="results"></div>
 
@@ -149,6 +164,27 @@ thumbC.addEventListener('keydown', (e) => {
 });
 renderC();
 
+// 变体 D：仅指针事件（pointerdown 点轨道跳档），无键盘支持——验证指针兜底驱动
+setupPopover('pillD', 'popD');
+const sliderD = document.getElementById('sliderD');
+const thumbD = document.getElementById('thumbD');
+const rangeD = document.getElementById('rangeD');
+const pillDEffort = document.getElementById('pillDEffort');
+function renderD() {
+  const now = Number(thumbD.getAttribute('aria-valuenow'));
+  const max = Number(thumbD.getAttribute('aria-valuemax'));
+  rangeD.style.width = `${(now / max) * 100}%`;
+  pillDEffort.textContent = EFFORTS[now];
+}
+sliderD.addEventListener('pointerdown', (e) => {
+  const rect = sliderD.getBoundingClientRect();
+  const max = Number(thumbD.getAttribute('aria-valuemax'));
+  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  thumbD.setAttribute('aria-valuenow', String(Math.round(ratio * max)));
+  renderD();
+});
+renderD();
+
 // debug 面板：展示两个原生滑杆的实时值，便于确认被测脚本确实驱动了它们
 const debug = document.getElementById('debug');
 setInterval(() => {
@@ -164,6 +200,7 @@ if (params.get('open') === '1' || params.get('autotest') === '1') {
   document.getElementById('popA').hidden = false;
   document.getElementById('popB').hidden = false;
   document.getElementById('popC').hidden = false;
+  document.getElementById('popD').hidden = false;
 }
 if (params.get('autotest') === '1') {
   const results = [];
@@ -216,11 +253,19 @@ if (params.get('autotest') === '1') {
       check('panelC.canvasNotSquished', canvasWrapC ? (canvasWrapC.clientHeight > 100 ? 'ok' : `h=${canvasWrapC.clientHeight}`) : 'missing', 'ok');
       // thumb 外裹了一层 thumb-wrap：多爬逻辑应把整个 .mock-slider 藏掉（包括轨道）
       check('nativeC.wholeSliderHidden', document.getElementById('sliderC').classList.contains('liangc-native-hidden'), true);
-      check('nativeC.trackGone', popC.querySelector('.mock-track').offsetParent === null, true);
+      check('nativeC.trackGone', getComputedStyle(document.getElementById('sliderC')).opacity, '0');
       // 弹层卡片被撑宽到能装下面板
       check('panelC.popoverWidened', popCContent.getBoundingClientRect().width >= 264, true);
       setLiang(popC, 30);
       check('driveC.max', thumbC.getAttribute('aria-valuenow'), '3');
+      // 变体 D：无键盘支持的滑杆必须走指针兜底驱动
+      const popD = document.getElementById('popD');
+      const thumbD = document.getElementById('thumbD');
+      check('panelD.injected', !!popD.querySelector('.liangc-root'), true);
+      setLiang(popD, 30);
+      check('driveD.pointerMax', thumbD.getAttribute('aria-valuenow'), '3');
+      setLiang(popD, 0);
+      check('driveD.pointerMin', thumbD.getAttribute('aria-valuenow'), '0');
 
       // ---- 第二阶段：模拟 React 重渲染把原生滑杆换成新节点（真实站点已证实此行为）----
       const oldThumb = document.getElementById('thumbA');

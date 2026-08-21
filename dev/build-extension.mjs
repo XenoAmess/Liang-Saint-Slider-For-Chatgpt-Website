@@ -39,6 +39,21 @@ const manifest = {
   name: '滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider)',
   version,
   description: '把 chatgpt.com 的思考强度滑杆替换为 31 级滑动变祖器（小难梁→梁祖）。',
+  icons: {
+    16: 'icons/icon-16.png',
+    32: 'icons/icon-32.png',
+    48: 'icons/icon-48.png',
+    128: 'icons/icon-128.png',
+  },
+  action: {
+    default_title: '滑动变祖器 · ChatGPT 思考滑杆',
+    default_icon: {
+      16: 'icons/icon-16.png',
+      32: 'icons/icon-32.png',
+      48: 'icons/icon-48.png',
+      128: 'icons/icon-128.png',
+    },
+  },
   content_scripts: [
     {
       matches: ['https://chatgpt.com/*', 'https://chat.openai.com/*'],
@@ -58,6 +73,7 @@ const manifest = {
 writeFileSync(join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 
 cpSync(join(ROOT, 'frames'), join(OUT, 'frames'), { recursive: true });
+cpSync(join(ROOT, 'icons'), join(OUT, 'icons'), { recursive: true });
 
 console.log(`已生成 dist/extension/（v${version}）。`);
 console.log('到 chrome://extensions 开启「开发者模式」→「加载未打包的扩展程序」→ 选择 dist/extension 目录。');
