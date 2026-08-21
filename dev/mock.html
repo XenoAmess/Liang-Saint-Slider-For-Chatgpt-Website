@@ -59,6 +59,7 @@
 </div>
 
 <div class="debug" id="debug">debug: —</div>
+<div class="debug" id="results"></div>
 
 <script>
 // ---- Mock 的「原生」逻辑：模拟 ChatGPT 侧滑杆行为（与被测脚本无关） ----
@@ -157,13 +158,17 @@ if (params.get('autotest') === '1') {
       results.push(`EXCEPTION:${err && err.message}`);
     }
     document.title = results.every((r) => r.includes('PASS')) ? 'ALL_PASS' : 'SOME_FAIL';
-    debug.textContent = results.join(' | ');
+    document.getElementById('results').textContent = results.join(' | ');
   }, 1500);
 }
 </script>
 
-<!-- 被测脚本：以本地帧源加载 -->
-<script>window.__LIANG_FRAME_BASE__ = '../frames/';</script>
-<script src="../liang-saint-slider.user.js"></script>
+<!-- 被测脚本：默认以本地帧源直引 userscript；?noembed=1 时不自引（用于扩展版冒烟，改由扩展注入） -->
+<script>
+if (!new URLSearchParams(location.search).has('noembed')) {
+  window.__LIANG_FRAME_BASE__ = '../frames/';
+  document.write('<script src="../liang-saint-slider.user.js"><\/script>');
+}
+</script>
 </body>
 </html>

@@ -19,11 +19,27 @@
 
 ## 安装
 
+### 方案 A：Tampermonkey（首选）
+
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 浏览器扩展。
 2. 新建脚本，把 [`liang-saint-slider.user.js`](liang-saint-slider.user.js) 全文粘贴进去保存；
-   或在本仓库 push 到 GitHub 后，直接访问 raw 链接由 Tampermonkey 自动识别安装：
+   或直接访问 raw 链接由 Tampermonkey 自动识别安装（带自动更新）：
    `https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js`
 3. 打开 chatgpt.com，点开思考强度弹层即可看到变祖器。
+
+### 方案 B：未打包扩展（Tampermonkey 注入失败时的兜底，推荐 Chrome 用户）
+
+MV3 下 Tampermonkey 的注入链路易被「网站访问权限 / 用户脚本开关 / CSP」三重夹击。本方案不走 Tampermonkey，content script 直连，帧素材打包在扩展内（不联网、不受页面 CSP 约束）：
+
+```sh
+npm run build:extension   # 生成 dist/extension/
+```
+
+1. 打开 `chrome://extensions`，开启「开发者模式」；
+2. 点「加载未打包的扩展程序」，选择 `dist/extension/` 目录；
+3. 硬刷新（Ctrl+Shift+R）chatgpt.com。
+
+扩展由 `dev/build-extension.mjs` 从 userscript 自动生成（版本号、CSS、逻辑同一事实来源），重新构建即可同步脚本改动。
 
 ## 工作原理
 
@@ -50,6 +66,7 @@ Tampermonkey 菜单显示「此脚本还未被执行」时，按顺序排查：
 2. **确认 Chrome 允许运行用户脚本**：`chrome://extensions` 打开「开发者模式」（MV3 版 Tampermonkey 必需；部分版本是 Tampermonkey 详情页里的「允许用户脚本」开关）。**没开的话 Tampermonkey 只能用内联 `<script>` 兜底注入，会被 chatgpt.com 的 CSP 直接拦截**——控制台里出现来自 `content.js` 的 `Executing inline script violates ... script-src-elem` 报错就是这个症状。
 3. **确认脚本版本 ≥ 1.0.1**（管理面板里看 `@version`）：v1.0.0 是 `@grant none`，必然走页面内联注入，同样撞 CSP。最稳妥的做法是删掉旧脚本，用 [raw 安装链接](https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js) 重装（还能获得自动更新）。
 4. **看注入信标**（v1.0.2+）：刷新后页面右下角应闪现「滑动变祖器 vX.X.X 已注入」徽章，控制台（F12）过滤 `滑动变祖器` 应看到 `已注入` 日志。两者都没有 → 注入层面被拦，回到第 1~3 步。
+4. **以上都试过仍无注入** → 放弃 Tampermonkey，改用[方案 B：未打包扩展](#方案-b未打包扩展tampermonkey-注入失败时的兜底推荐-chrome-用户)。MV3 下扩展的「网站访问」权限（chrome://extensions → Tampermonkey → 详情）被改成「点击时」也会导致这种静默不注入。
 5. **徽章有但滑杆没变** → ChatGPT 的实际 DOM 与选择器不匹配。控制台执行 `__liang.probe()`，把输出截图发给作者即可校准。
 
 ## 本地开发

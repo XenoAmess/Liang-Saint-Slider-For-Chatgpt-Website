@@ -23,8 +23,9 @@
 | --- | --- |
 | `liang-saint-slider.user.js` | 主脚本，单文件 userscript，无构建、无运行时依赖。顶部 `CONFIG` 集中了弹层/滑杆选择器与帧源列表，ChatGPT 改版后优先改这里 |
 | `frames/frame-00.webp … frame-30.webp` | 31 张关键帧。**素材不随 MIT 共享**（见 README「素材与致谢」），不要声称拥有其权利 |
-| `dev/mock.html` | ChatGPT 弹层模拟页。`?open=1` 自动开弹层；`?autotest=1` 自动断言并把结果写进 `document.title`（`ALL_PASS` / `SOME_FAIL`） |
+| `dev/mock.html` | ChatGPT 弹层模拟页。`?open=1` 自动开弹层；`?autotest=1` 自动断言并把结果写进 `document.title`（`ALL_PASS` / `SOME_FAIL`）与 `#results` 节点；`?noembed=1` 不自引脚本（配合扩展版冒烟） |
 | `dev/server.js` | 极简静态服务器，`npm run dev` → http://localhost:8787/dev/mock.html |
+| `dev/build-extension.mjs` | `npm run build:extension` → 从 userscript 生成 MV3 未打包扩展到 `dist/extension/`（版本号、CSS、逻辑同一事实来源；帧打进扩展内）。`dist/` 已 gitignore |
 
 ## 关键设计约束
 
@@ -45,3 +46,16 @@ google-chrome --headless=new --disable-gpu --no-sandbox --virtual-time-budget=10
 ```
 
 真实站点无登录态无法自测；选择器问题靠用户在 chatgpt.com 控制台用 `window.__liang.rescan()` / `__liang.restoreAll()` 反馈校准。
+
+## 扩展版冒烟（改动构建脚本后做）
+
+**品牌版 Google Chrome 的无头模式拒绝 `--load-extension`**（`--load-extension is not allowed in Google Chrome, ignoring`），需用 Chrome for Testing：
+
+```sh
+npx @puppeteer/browsers install chrome@stable   # 一次性，装到 CWD 下
+npm run build:extension
+# 把 dist/extension 复制一份并将 manifest 的 matches 改为 http://localhost:8787/*，然后：
+<chrome-for-testing>/chrome --headless=new --no-sandbox --load-extension=<改过的副本> \
+  --virtual-time-budget=10000 --dump-dom 'http://localhost:8787/dev/mock.html?autotest=1&noembed=1' \
+  | grep -oE '<title>[^<]*</title>'   # 期望 <title>ALL_PASS</title>
+```

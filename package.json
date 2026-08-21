@@ -4,7 +4,8 @@
   "description": "滑动变祖器 · ChatGPT 思考滑杆：把 chatgpt.com 的思考强度滑杆替换为 31 级梁系强度校准器（Tampermonkey 用户脚本）",
   "main": "liang-saint-slider.user.js",
   "scripts": {
-    "dev": "node dev/server.js"
+    "dev": "node dev/server.js",
+    "build:extension": "node dev/build-extension.mjs"
   },
   "keywords": [
     "tampermonkey",
