@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.4
+// @version      1.0.5
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.4';
+  const VERSION = '1.0.5';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -99,7 +99,7 @@
    * 样式（一次性注入）
    * ---------------------------------------------------------------------- */
   const CSS = `
-.liangc-root{display:flex;flex-direction:column;gap:7px;padding:6px 6px 8px;width:232px;max-width:82vw;box-sizing:border-box;color:inherit;font-family:inherit;flex:none}
+.liangc-root{display:flex;flex-direction:column;gap:7px;padding:6px 6px 8px;width:232px;max-width:82vw;box-sizing:border-box;color:inherit;font-family:inherit;flex:none;margin:0 auto}
 .liangc-root>*{flex:none}
 .liangc-canvasWrap{position:relative;border-radius:10px;overflow:hidden;border:1px solid rgb(128 128 128/35%);background:#1d1918;flex:none}
 .liangc-canvas{width:100%;aspect-ratio:1/1;display:block}
@@ -230,24 +230,46 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
   }
 
   /** ------------------------------------------------------------------------
-   * 原生滑杆抽象：读取档位、回写档位
+   * 原生滑杆抽象：惰性解析 + 读取档位、回写档位
+   *
+   * 关键：ChatGPT 是 React 应用，拖动导致的状态变化会触发弹层重渲染，
+   * 原生滑杆节点会被整个换掉。若死抱增强那一刻的节点引用，后续读写都会
+   * 打在已脱离文档的旧节点上（表现为「驱动原生滑杆失败」+ 新节点裸奔可见）。
+   * 因此 read/write 每次调用都重新在弹层内解析当前节点。
    * ---------------------------------------------------------------------- */
   const num = (raw, fallback) => {
     const v = parseFloat(raw);
     return Number.isFinite(v) ? v : fallback;
   };
 
-  // 返回 { min, max, step, stops, read(), write(v) } 或 null
-  function describeNativeSlider(el) {
-    if (el instanceof HTMLInputElement && el.type === 'range') {
-      const min = num(el.min, 0);
-      const max = num(el.max, 100);
-      const step = num(el.step, 1) > 0 ? num(el.step, 1) : 1;
+  // 弹层内当前的原生滑杆节点（排除我们自己注入的梁系滑杆）
+  function resolveNativeSlider(popover) {
+    for (const el of popover.querySelectorAll('[role="slider"], input[type="range"]')) {
+      if (!el.closest('.liangc-root')) return el;
+    }
+    return null;
+  }
+
+  // 返回 { min, max, step, stops, read(), write(v) } 或 null（量程在增强时读一次，读写按调用时实时解析节点）
+  function describeNativeSlider(popover) {
+    const first = resolveNativeSlider(popover);
+    if (!first) return null;
+
+    if (first instanceof HTMLInputElement && first.type === 'range') {
+      const min = num(first.min, 0);
+      const max = num(first.max, 100);
+      const rawStep = num(first.step, 1);
+      const step = rawStep > 0 ? rawStep : 1;
       const stops = (max - min) / step <= 64 ? Math.round((max - min) / step) + 1 : 0;
       return {
         min, max, step, stops,
-        read: () => num(el.value, min),
+        read: () => {
+          const el = resolveNativeSlider(popover);
+          return el instanceof HTMLInputElement ? num(el.value, min) : min;
+        },
         write: (v) => {
+          const el = resolveNativeSlider(popover);
+          if (!(el instanceof HTMLInputElement) || !el.isConnected) return false;
           if (num(el.value, min) === v) return true; // 值未变不发事件，避免无谓打扰宿主逻辑
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
           setter.call(el, String(v));
@@ -257,46 +279,52 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         },
       };
     }
-    if (el.getAttribute && el.getAttribute('role') === 'slider') {
-      const min = num(el.getAttribute('aria-valuemin'), 0);
-      const max = num(el.getAttribute('aria-valuemax'), 100);
+
+    if (first.getAttribute && first.getAttribute('role') === 'slider') {
+      const min = num(first.getAttribute('aria-valuemin'), 0);
+      const max = num(first.getAttribute('aria-valuemax'), 100);
       const step = 1;
       const stops = max - min <= 64 ? Math.round(max - min) + 1 : 0;
-      const read = () => num(el.getAttribute('aria-valuenow'), min);
-      const press = (key) =>
-        el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
+      const readFrom = (el) => num(el.getAttribute('aria-valuenow'), min);
       return {
         min, max, step, stops,
-        read,
+        read: () => {
+          const el = resolveNativeSlider(popover);
+          return el ? readFrom(el) : min;
+        },
         write: (target) => {
+          const el = resolveNativeSlider(popover);
+          if (!el || !el.isConnected) return false;
           // Radix 式滑杆：聚焦 thumb 后用键盘步进（Home/End 粗跳 + 方向键微调）
           try {
             el.focus({ preventScroll: true });
           } catch {
             el.focus();
           }
+          const press = (key) =>
+            el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
           let guard = 0;
-          let current = read();
+          let current = readFrom(el);
           if (current === target) return true;
           if (target === min) {
             press('Home');
-            if (read() === target) return true;
+            if (readFrom(el) === target) return true;
           } else if (target === max) {
             press('End');
-            if (read() === target) return true;
+            if (readFrom(el) === target) return true;
           }
           while (guard++ < 96) {
-            current = read();
+            current = readFrom(el);
             if (current === target) return true;
             press(current < target ? 'ArrowRight' : 'ArrowLeft');
-            let after = read();
+            let after = readFrom(el);
             if (after === current) {
               press(current < target ? 'ArrowUp' : 'ArrowDown');
-              after = read();
+              after = readFrom(el);
               if (after === current) return false; // 键盘驱动无效
             }
           }
-          return read() === target;
+          return readFrom(el) === target;
         },
       };
     }
@@ -431,9 +459,16 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
   }
 
   /** ------------------------------------------------------------------------
-   * 注入与增强
+   * 注入与增强（带自愈）
+   *
+   * React 在原生滑杆值变化后会重渲染弹层，把滑杆换成全新节点（没有我们的
+   * 隐藏类），甚至可能把我们的面板也摘掉。因此增强状态按「弹层」记录，
+   * 每次扫描都会校验：原生滑杆是否又被换节点裸奔、面板是否还挂在弹层里，
+   * 发现异常就地修复。
    * ---------------------------------------------------------------------- */
-  const enhancedSliders = new WeakSet();
+  const popoverStates = new WeakMap(); // popover -> { native, panel }
+  const managedPopovers = new Set(); // restoreAll 用（WeakMap 不可遍历）
+  const failedPopovers = new WeakSet(); // 自检失败的弹层，不再反复尝试
 
   // 找到要隐藏的原生滑杆组件根：thumb 外常被裹多层定位包装（只藏第一层会留下
   // 可见的轨道/thumb 残影），向上爬过纯包装节点，把整个滑杆组件一起藏掉。
@@ -444,7 +479,9 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     let guard = 0;
     while (node && node !== popover && node !== document.body && guard < 3) {
       const rect = node.getBoundingClientRect();
-      if (rect.height === 0 || rect.height > 56) break; // 已是更大的容器
+      // 已被我们 display:none 的节点量出来高度为 0，那不是「未布局」，照常爬过
+      const hiddenByUs = node.classList.contains('liangc-native-hidden');
+      if (!hiddenByUs && (rect.height === 0 || rect.height > 56)) break; // 已是更大的容器
       if (node.children.length > 2) break; // 含多个并列内容，再爬可能误伤
       root = node;
       node = node.parentElement;
@@ -453,34 +490,52 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     return root;
   }
 
-  function enhance(sliderEl) {
-    const native = describeNativeSlider(sliderEl);
-    if (!native) return;
-
-    const popover = sliderEl.closest(CONFIG.POPOVER_SELECTOR);
+  // 隐藏当前原生滑杆 + 保证面板挂在它前面 + 放宽弹层祖先链限制（enhance/heal 共用）
+  function hideNativeAndRelax(popover, sliderEl, panelRoot) {
     const nativeRoot = nativeRootOf(sliderEl, popover);
-    if (!nativeRoot.parentElement) return;
-
-    const panel = buildPanel(native);
-    nativeRoot.parentElement.insertBefore(panel.root, nativeRoot);
     nativeRoot.classList.add('liangc-native-hidden');
-
-    // 放宽弹层祖先链的高度/overflow 限制，防止面板被 flex 压缩或裁剪成横带
-    let ancestor = panel.root.parentElement;
+    // 重插面板时，宿主绝不能落在已被我们隐藏的子树里（否则面板跟着消失）
+    const host = nativeRoot.parentElement;
+    if (host && !host.closest('.liangc-native-hidden')) {
+      if (panelRoot.parentElement !== host) host.insertBefore(panelRoot, nativeRoot);
+    } else if (!popover.contains(panelRoot)) {
+      popover.appendChild(panelRoot); // 兜底：宿主正被 React 拆改，至少保住面板
+    }
+    let ancestor = panelRoot.parentElement;
     while (ancestor) {
       ancestor.classList.add('liangc-relaxed');
       if (ancestor === popover) break;
       ancestor = ancestor.parentElement;
     }
+    return nativeRoot;
+  }
+
+  function enhance(sliderEl, popover) {
+    const native = describeNativeSlider(popover);
+    if (!native) return;
+
+    const nativeRoot = nativeRootOf(sliderEl, popover);
+    if (!nativeRoot.parentElement) return;
+
+    const panel = buildPanel(native);
+    hideNativeAndRelax(popover, sliderEl, panel.root);
 
     // 写一次与原生当前值相同的位置做自检；失败则回滚，免得把功能藏没
     if (!native.write(native.read())) {
       console.warn(TAG, '原生滑杆不可驱动，已还原原样', sliderEl);
       nativeRoot.classList.remove('liangc-native-hidden');
       panel.root.remove();
+      failedPopovers.add(popover);
       return;
     }
+    popoverStates.set(popover, { native, panel });
+    managedPopovers.add(popover);
     console.debug(TAG, '已接管思考滑杆', sliderEl);
+  }
+
+  // 自愈：React 重渲染换了滑杆节点后重新隐藏；面板被摘掉则重新挂回
+  function heal(popover, state, sliderEl) {
+    hideNativeAndRelax(popover, sliderEl, state.panel.root);
   }
 
   function scan() {
@@ -491,15 +546,15 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
       return;
     }
     for (const el of candidates) {
-      if (enhancedSliders.has(el)) continue;
       if (el.closest('.liangc-root')) continue; // 跳过自己注入的梁系滑杆，防止级联增强
       const popover = el.closest(CONFIG.POPOVER_SELECTOR);
-      if (!popover) continue;
+      if (!popover || failedPopovers.has(popover)) continue;
       const width = popover.getBoundingClientRect().width;
       if (width > CONFIG.MAX_POPOVER_WIDTH) continue; // 大对话框不碰；宽度为 0 视为未布局完成，放行
-      enhancedSliders.add(el);
+      const state = popoverStates.get(popover);
       try {
-        enhance(el);
+        if (state) heal(popover, state, el);
+        else enhance(el, popover);
       } catch (err) {
         console.warn(TAG, '增强失败', err);
       }
@@ -563,7 +618,8 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         max: el.getAttribute('aria-valuemax') ?? el.max ?? null,
         now: el.getAttribute('aria-valuenow') ?? el.value ?? null,
         inPopover: !!el.closest(CONFIG.POPOVER_SELECTOR),
-        enhanced: enhancedSliders.has(el),
+        enhanced: popoverStates.has(el.closest(CONFIG.POPOVER_SELECTOR)),
+        hidden: !!el.closest('.liangc-native-hidden'),
         isOurs: !!el.closest('.liangc-root'),
         // 截一段父级结构，方便远程校准选择器/隐藏范围
         parentHTML: (el.parentElement?.outerHTML || '').slice(0, 300),
@@ -573,10 +629,24 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
       else console.log(report);
       return report;
     },
+    // 导出当前弹层 DOM 结构（在弹层打开状态下执行），远程校准布局用
+    dump() {
+      const popover = document.querySelector(CONFIG.POPOVER_SELECTOR);
+      if (!popover) {
+        console.warn(TAG, '未找到弹层，请先打开思考强度弹层再执行 __liang.dump()');
+        return null;
+      }
+      const html = popover.outerHTML;
+      console.log(html);
+      console.log('%c↑ 把这段 HTML 完整复制发给作者即可定位布局问题', 'color:#4d6bfe');
+      return html;
+    },
     restoreAll() {
       for (const el of document.querySelectorAll('.liangc-native-hidden')) el.classList.remove('liangc-native-hidden');
       for (const el of document.querySelectorAll('.liangc-relaxed')) el.classList.remove('liangc-relaxed');
       for (const el of document.querySelectorAll('.liangc-root')) el.remove();
+      for (const popover of managedPopovers) popoverStates.delete(popover);
+      managedPopovers.clear();
     },
   };
 

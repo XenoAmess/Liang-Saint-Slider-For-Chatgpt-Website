@@ -91,29 +91,31 @@ function setupPopover(pillId, popId) {
 
 // 变体 A：Radix 风格，仅响应 thumb 上的键盘事件（与真实 Radix Slider 一致）
 setupPopover('pillA', 'popA');
-const thumbA = document.getElementById('thumbA');
 const rangeA = document.getElementById('rangeA');
 const pillAEffort = document.getElementById('pillAEffort');
-function renderA() {
-  const now = Number(thumbA.getAttribute('aria-valuenow'));
-  const max = Number(thumbA.getAttribute('aria-valuemax'));
+function renderA(el) {
+  const now = Number(el.getAttribute('aria-valuenow'));
+  const max = Number(el.getAttribute('aria-valuemax'));
   rangeA.style.width = `${(now / max) * 100}%`;
   pillAEffort.textContent = EFFORTS[now];
 }
-thumbA.addEventListener('keydown', (e) => {
-  const min = Number(thumbA.getAttribute('aria-valuemin'));
-  const max = Number(thumbA.getAttribute('aria-valuemax'));
-  let now = Number(thumbA.getAttribute('aria-valuenow'));
+const onThumbAKeydown = (e) => {
+  const el = e.currentTarget;
+  const min = Number(el.getAttribute('aria-valuemin'));
+  const max = Number(el.getAttribute('aria-valuemax'));
+  let now = Number(el.getAttribute('aria-valuenow'));
   if (e.key === 'ArrowRight' || e.key === 'ArrowUp') now = Math.min(max, now + 1);
   else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') now = Math.max(min, now - 1);
   else if (e.key === 'Home') now = min;
   else if (e.key === 'End') now = max;
   else return;
   e.preventDefault();
-  thumbA.setAttribute('aria-valuenow', String(now));
-  renderA();
-});
-renderA();
+  el.setAttribute('aria-valuenow', String(now));
+  renderA(el);
+};
+const bindThumbA = (el) => el.addEventListener('keydown', onThumbAKeydown);
+bindThumbA(document.getElementById('thumbA'));
+renderA(document.getElementById('thumbA'));
 
 // 变体 B：原生 range input
 setupPopover('pillB', 'popB');
@@ -150,8 +152,9 @@ renderC();
 // debug 面板：展示两个原生滑杆的实时值，便于确认被测脚本确实驱动了它们
 const debug = document.getElementById('debug');
 setInterval(() => {
+  const a = document.getElementById('thumbA');
   debug.textContent =
-    `debug: A.aria-valuenow = ${thumbA.getAttribute('aria-valuenow')} （${EFFORTS[Number(thumbA.getAttribute('aria-valuenow'))]}）` +
+    `debug: A.aria-valuenow = ${a.getAttribute('aria-valuenow')} （${EFFORTS[Number(a.getAttribute('aria-valuenow'))]}）` +
     ` | B.value = ${sliderB.value} （${EFFORTS[Number(sliderB.value)]}）`;
 }, 300);
 
@@ -172,10 +175,15 @@ if (params.get('autotest') === '1') {
     r.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   };
+  const finalize = () => {
+    document.title = results.every((r) => r.includes('PASS')) ? 'ALL_PASS' : 'SOME_FAIL';
+    document.getElementById('results').textContent = results.join(' | ');
+  };
   setTimeout(() => {
     try {
       const popA = document.getElementById('popA');
       const popB = document.getElementById('popB');
+      const thumbA = document.getElementById('thumbA');
       check('panelA.injected', !!popA.querySelector('.liangc-root'), true);
       check('panelB.injected', !!popB.querySelector('.liangc-root'), true);
       check('nativeA.hidden', !!popA.querySelector('.liangc-native-hidden'), true);
@@ -201,10 +209,11 @@ if (params.get('autotest') === '1') {
       // 变体 C：苛刻弹层（flex + 固定高度 + overflow 裁剪）下面板必须完整展开
       const popC = document.getElementById('popC');
       const popCContent = document.getElementById('popCContent');
+      const thumbC = document.getElementById('thumbC');
       check('panelC.injected', !!popC.querySelector('.liangc-root'), true);
       check('panelC.ancestorRelaxed', popCContent.classList.contains('liangc-relaxed'), true);
       const canvasWrapC = popC.querySelector('.liangc-canvasWrap');
-      check('panelC.canvasNotSquished', canvasWrapC ? canvasWrapC.clientHeight > 100 : -1, true);
+      check('panelC.canvasNotSquished', canvasWrapC ? (canvasWrapC.clientHeight > 100 ? 'ok' : `h=${canvasWrapC.clientHeight}`) : 'missing', 'ok');
       // thumb 外裹了一层 thumb-wrap：多爬逻辑应把整个 .mock-slider 藏掉（包括轨道）
       check('nativeC.wholeSliderHidden', document.getElementById('sliderC').classList.contains('liangc-native-hidden'), true);
       check('nativeC.trackGone', popC.querySelector('.mock-track').offsetParent === null, true);
@@ -212,11 +221,32 @@ if (params.get('autotest') === '1') {
       check('panelC.popoverWidened', popCContent.getBoundingClientRect().width >= 264, true);
       setLiang(popC, 30);
       check('driveC.max', thumbC.getAttribute('aria-valuenow'), '3');
+
+      // ---- 第二阶段：模拟 React 重渲染把原生滑杆换成新节点（真实站点已证实此行为）----
+      const oldThumb = document.getElementById('thumbA');
+      const newThumb = oldThumb.cloneNode(true);
+      newThumb.setAttribute('aria-valuenow', '1');
+      bindThumbA(newThumb); // React 会给新节点绑上它自己的事件（mock 里手动复刻）
+      const sliderRootA = document.getElementById('sliderA');
+      sliderRootA.classList.remove('liangc-native-hidden'); // React 重建的 DOM 没有我们的隐藏类
+      oldThumb.parentNode.replaceChild(newThumb, oldThumb);
+      setTimeout(() => {
+        try {
+          // MutationObserver 触发自愈：新节点应被重新隐藏，面板应还挂着
+          check('healA.rehidden', sliderRootA.classList.contains('liangc-native-hidden'), true);
+          check('healA.panelSurvives', !!popA.querySelector('.liangc-root'), true);
+          // 惰性解析：继续拖动应驱动新节点而不是死掉的旧节点
+          setLiang(popA, 30);
+          check('healA.driveNewNode', newThumb.getAttribute('aria-valuenow'), '3');
+        } catch (err) {
+          results.push(`EXCEPTION2:${err && err.message}`);
+        }
+        finalize();
+      }, 600);
     } catch (err) {
       results.push(`EXCEPTION:${err && err.message}`);
+      finalize();
     }
-    document.title = results.every((r) => r.includes('PASS')) ? 'ALL_PASS' : 'SOME_FAIL';
-    document.getElementById('results').textContent = results.join(' | ');
   }, 1500);
 }
 </script>
