@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.3
+// @version      1.0.4
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.3';
+  const VERSION = '1.0.4';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -109,14 +109,16 @@
 .liangc-id{display:flex;flex-direction:column;align-items:flex-start;min-width:0}
 .liangc-stage{font-family:"Songti SC",STSong,"SimSun",serif;font-size:22px;font-weight:700;line-height:28px}
 .liangc-level{opacity:.65;font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;line-height:18px;flex:none}
-.liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor:pointer}
+/* 双段选择器压过 ChatGPT 可能对裸 input[type=range] 下的全局样式（优先级 0,1,1） */
+input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor:pointer;position:static;appearance:auto;background:none;border:none;padding:0}
 .liangc-markers{display:flex;justify-content:space-between;gap:4px;opacity:.65;font-size:11px;line-height:16px;padding:0 2px}
 .liangc-marker{white-space:nowrap}
 .liangc-marker.is-current{color:#4d6bfe;font-weight:700;opacity:1}
 .liangc-native-hidden{display:none !important}
 /* ChatGPT 弹层常用 flex + 固定高度/overflow 裁剪内容，会把面板压成一条横带；
-   注入后给弹层祖先链打上这个类放宽限制，让完整人像露出来 */
-.liangc-relaxed{height:auto !important;max-height:calc(100vh - 16px) !important;overflow:visible !important}
+   注入后给弹层祖先链打上这个类放宽限制，让完整人像露出来；
+   min-width 负责把弹层卡片撑到能装下 232px 面板，避免内容探出右边框 */
+.liangc-relaxed{height:auto !important;max-height:calc(100vh - 16px) !important;overflow:visible !important;min-width:264px !important}
 `;
 
   let stylesInjected = false;
@@ -433,20 +435,32 @@
    * ---------------------------------------------------------------------- */
   const enhancedSliders = new WeakSet();
 
-  // 找到要隐藏/替换的原生滑杆根节点（Radix：thumb 的父节点即 Slider 根）
-  function nativeRootOf(sliderEl) {
-    if (sliderEl instanceof HTMLInputElement) return sliderEl;
-    return sliderEl.parentElement || sliderEl;
+  // 找到要隐藏的原生滑杆组件根：thumb 外常被裹多层定位包装（只藏第一层会留下
+  // 可见的轨道/thumb 残影），向上爬过纯包装节点，把整个滑杆组件一起藏掉。
+  // 爬升条件刻意保守（高度像一行滑杆、子节点少、不越过弹层容器），宁可少藏不可误伤。
+  function nativeRootOf(sliderEl, popover) {
+    let root = sliderEl instanceof HTMLInputElement ? sliderEl : sliderEl.parentElement || sliderEl;
+    let node = root.parentElement;
+    let guard = 0;
+    while (node && node !== popover && node !== document.body && guard < 3) {
+      const rect = node.getBoundingClientRect();
+      if (rect.height === 0 || rect.height > 56) break; // 已是更大的容器
+      if (node.children.length > 2) break; // 含多个并列内容，再爬可能误伤
+      root = node;
+      node = node.parentElement;
+      guard += 1;
+    }
+    return root;
   }
 
   function enhance(sliderEl) {
     const native = describeNativeSlider(sliderEl);
     if (!native) return;
 
-    const nativeRoot = nativeRootOf(sliderEl);
+    const popover = sliderEl.closest(CONFIG.POPOVER_SELECTOR);
+    const nativeRoot = nativeRootOf(sliderEl, popover);
     if (!nativeRoot.parentElement) return;
 
-    const popover = sliderEl.closest(CONFIG.POPOVER_SELECTOR);
     const panel = buildPanel(native);
     nativeRoot.parentElement.insertBefore(panel.root, nativeRoot);
     nativeRoot.classList.add('liangc-native-hidden');
@@ -551,6 +565,8 @@
         inPopover: !!el.closest(CONFIG.POPOVER_SELECTOR),
         enhanced: enhancedSliders.has(el),
         isOurs: !!el.closest('.liangc-root'),
+        // 截一段父级结构，方便远程校准选择器/隐藏范围
+        parentHTML: (el.parentElement?.outerHTML || '').slice(0, 300),
       }));
       console.log(`${TAG} 探测到 ${report.length} 个滑杆候选：`);
       if (console.table) console.table(report);
