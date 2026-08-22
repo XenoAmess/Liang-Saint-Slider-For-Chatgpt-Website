@@ -196,11 +196,12 @@ setInterval(() => {
 
 // ---- 无头冒烟辅助：?open=1 自动打开弹层；?autotest=1 自动断言并把结果写进 document.title ----
 const params = new URLSearchParams(location.search);
-if (params.get('open') === '1' || params.get('autotest') === '1') {
-  document.getElementById('popA').hidden = false;
-  document.getElementById('popB').hidden = false;
-  document.getElementById('popC').hidden = false;
-  document.getElementById('popD').hidden = false;
+// open=1 全开；open=A/B/C/D 只开指定弹层（截图/调试用）；autotest=1 全开并断言
+const openParam = (params.get('open') || '').toUpperCase();
+if (params.get('autotest') === '1' || openParam === '1') {
+  for (const id of ['popA', 'popB', 'popC', 'popD']) document.getElementById(id).hidden = false;
+} else if (['A', 'B', 'C', 'D'].includes(openParam)) {
+  document.getElementById('pop' + openParam).hidden = false;
 }
 if (params.get('autotest') === '1') {
   const results = [];
@@ -216,7 +217,9 @@ if (params.get('autotest') === '1') {
     document.title = results.every((r) => r.includes('PASS')) ? 'ALL_PASS' : 'SOME_FAIL';
     document.getElementById('results').textContent = results.join(' | ');
   };
-  setTimeout(() => {
+  // v1.0.9 起驱动是异步落地（每步让出宏任务等状态更新），断言前必须等待
+  const tick = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+  setTimeout(async () => {
     try {
       const popA = document.getElementById('popA');
       const popB = document.getElementById('popB');
@@ -229,16 +232,21 @@ if (params.get('autotest') === '1') {
       check('panelA.syncedLevel', popA.querySelector('.liangc-range')?.value, '20');
       // 拖到 30（梁祖）→ 原生应到最高档 3
       setLiang(popA, 30);
+      await tick();
       check('driveA.max', thumbA.getAttribute('aria-valuenow'), '3');
       setLiang(popB, 30);
+      await tick();
       check('driveB.max', sliderB.value, '3');
       // 拖到 0（小难梁）→ 原生应到最低档 0
       setLiang(popA, 0);
+      await tick();
       check('driveA.min', thumbA.getAttribute('aria-valuenow'), '0');
       setLiang(popB, 0);
+      await tick();
       check('driveB.min', sliderB.value, '0');
       // 中间档：15 → floor(15*4/31)=1 → 原生效能 1（中）
       setLiang(popA, 15);
+      await tick();
       check('driveA.mid', thumbA.getAttribute('aria-valuenow'), '1');
       // 人像帧与阶段标注
       check('panelA.stage', popA.querySelector('.liangc-stage')?.textContent, '梁圣');
@@ -257,14 +265,17 @@ if (params.get('autotest') === '1') {
       // 弹层卡片被撑宽到能装下面板
       check('panelC.popoverWidened', popCContent.getBoundingClientRect().width >= 264, true);
       setLiang(popC, 30);
+      await tick();
       check('driveC.max', thumbC.getAttribute('aria-valuenow'), '3');
       // 变体 D：无键盘支持的滑杆必须走指针兜底驱动
       const popD = document.getElementById('popD');
       const thumbD = document.getElementById('thumbD');
       check('panelD.injected', !!popD.querySelector('.liangc-root'), true);
       setLiang(popD, 30);
+      await tick();
       check('driveD.pointerMax', thumbD.getAttribute('aria-valuenow'), '3');
       setLiang(popD, 0);
+      await tick();
       check('driveD.pointerMin', thumbD.getAttribute('aria-valuenow'), '0');
 
       // ---- 第二阶段：模拟 React 重渲染把原生滑杆换成新节点（真实站点已证实此行为）----
@@ -275,13 +286,14 @@ if (params.get('autotest') === '1') {
       const sliderRootA = document.getElementById('sliderA');
       sliderRootA.classList.remove('liangc-native-hidden'); // React 重建的 DOM 没有我们的隐藏类
       oldThumb.parentNode.replaceChild(newThumb, oldThumb);
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           // MutationObserver 触发自愈：新节点应被重新隐藏，面板应还挂着
           check('healA.rehidden', sliderRootA.classList.contains('liangc-native-hidden'), true);
           check('healA.panelSurvives', !!popA.querySelector('.liangc-root'), true);
           // 惰性解析：继续拖动应驱动新节点而不是死掉的旧节点
           setLiang(popA, 30);
+          await tick();
           check('healA.driveNewNode', newThumb.getAttribute('aria-valuenow'), '3');
         } catch (err) {
           results.push(`EXCEPTION2:${err && err.message}`);
