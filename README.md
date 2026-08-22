@@ -49,14 +49,15 @@ npm run build:extension   # 生成 dist/extension/
 4. 自检失败（原生滑杆不可驱动）时自动回滚还原，不会把功能藏没。
 5. 帧素材默认从本仓库的 jsDelivr / raw 加载，失败时自动回退到上游项目的 GitHub Pages。
 
-ChatGPT 改版导致失效时，通常只需修改脚本顶部 `CONFIG` 里的选择器。控制台提供调试接口：
+ChatGPT 改版导致失效时，通常只需修改脚本顶部 `CONFIG` 里的选择器。
+
+**控制台调试（v1.0.7+，任意控制台上下文直接执行，无需切换）**：
 
 ```js
-window.__liang.rescan()      // 手动重扫
-window.__liang.probe()       // 列出页面全部滑杆候选及状态（校准选择器时反馈给作者）
-window.__liang.restoreAll()  // 还原所有被替换的原生滑杆
-window.__liang.CONFIG        // 查看/修改配置（选择器、帧源、徽章开关等）
+document.dispatchEvent(new CustomEvent('liang-command', {detail:'dump'}))
 ```
+
+支持命令：`dump`（导出弹层 DOM）/ `probe`（滑杆候选表）/ `testDrive`（实测真实滑杆吃哪种驱动事件，自动还原原值）/ `restore`（还原全部原生滑杆）。结果除控制台输出外还会弹出带「复制」按钮的页面浮层。
 
 ## 故障排查
 
@@ -65,9 +66,8 @@ Tampermonkey 菜单显示「此脚本还未被执行」时，按顺序排查：
 1. **整页硬刷新（Ctrl+Shift+R）**。chatgpt.com 是单页应用，脚本安装/更新后已打开的标签页不会补注入，只在站内点来点去（SPA 跳转）也不会触发——这是最常见的原因。
 2. **确认 Chrome 允许运行用户脚本**：`chrome://extensions` 打开「开发者模式」（MV3 版 Tampermonkey 必需；部分版本是 Tampermonkey 详情页里的「允许用户脚本」开关）。**没开的话 Tampermonkey 只能用内联 `<script>` 兜底注入，会被 chatgpt.com 的 CSP 直接拦截**——控制台里出现来自 `content.js` 的 `Executing inline script violates ... script-src-elem` 报错就是这个症状。
 3. **确认脚本版本 ≥ 1.0.1**（管理面板里看 `@version`）：v1.0.0 是 `@grant none`，必然走页面内联注入，同样撞 CSP。最稳妥的做法是删掉旧脚本，用 [raw 安装链接](https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js) 重装（还能获得自动更新）。
-4. **看注入信标**（v1.0.2+）：刷新后页面右下角应闪现「滑动变祖器 vX.X.X 已注入」徽章，控制台（F12）过滤 `滑动变祖器` 应看到 `已注入` 日志。两者都没有 → 注入层面被拦，回到第 1~3 步。
 4. **以上都试过仍无注入** → 放弃 Tampermonkey，改用[方案 B：未打包扩展](#方案-b未打包扩展tampermonkey-注入失败时的兜底推荐-chrome-用户)。MV3 下扩展的「网站访问」权限（chrome://extensions → Tampermonkey → 详情）被改成「点击时」也会导致这种静默不注入。
-5. **徽章有但滑杆没变** → ChatGPT 的实际 DOM 与选择器不匹配。控制台执行 `__liang.probe()`，把输出截图发给作者即可校准。
+5. **徽章有但滑杆没变** → ChatGPT 的实际 DOM 与选择器不匹配。控制台执行上面那条 `liang-command` 命令（`dump` / `testDrive`），把浮层内容复制发给作者即可校准。
 
 ## 本地开发
 

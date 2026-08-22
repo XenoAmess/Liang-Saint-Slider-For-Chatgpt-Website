@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.6
+// @version      1.0.7
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.6';
+  const VERSION = '1.0.7';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -263,6 +263,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
       const stops = (max - min) / step <= 64 ? Math.round((max - min) / step) + 1 : 0;
       return {
         min, max, step, stops,
+        _strategies: null, // input 型只有 setter 一条路，无需分策略实测
         read: () => {
           const el = resolveNativeSlider(popover);
           return el instanceof HTMLInputElement ? num(el.value, min) : min;
@@ -366,6 +367,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
 
       return {
         min, max, step, stops,
+        _strategies: { keyboard: driveByKeyboard, pointer: driveByPointer }, // testDrive 用
         read: () => {
           const el = resolveNativeSlider(popover);
           return el ? readFrom(el) : min;
@@ -661,54 +663,202 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     }
   }
 
-  // 沙箱里 window 是隔离世界的，调试接口挂到页面 window 上才能在控制台访问
+  /** ------------------------------------------------------------------------
+   * 调试接口：DOM 命令桥（主路径）+ 隔离世界 __liang（备用）
+   *
+   * 扩展的 content script 跑在隔离世界，__liang 挂在隔离 window 上，
+   * 主世界控制台访问不到；且每次重载扩展都会留下僵尸上下文，上下文下拉里
+   * 根本分不清死活。DOM 事件天然穿透所有世界，所以主路径走 CustomEvent 桥：
+   *   document.dispatchEvent(new CustomEvent('liang-command', {detail:'dump'}))
+   * 支持命令：dump / probe / testDrive / restore。结果同时进控制台和页面浮层。
+   * ---------------------------------------------------------------------- */
+
+  // 探测当前页面所有滑杆候选及其状态
+  function probeReport() {
+    const report = [...document.querySelectorAll(CONFIG.SLIDER_SELECTOR)].map((el, i) => ({
+      i,
+      kind: el.getAttribute('role') === 'slider' ? 'aria-slider' : el.tagName.toLowerCase(),
+      min: el.getAttribute('aria-valuemin') ?? el.min ?? null,
+      max: el.getAttribute('aria-valuemax') ?? el.max ?? null,
+      now: el.getAttribute('aria-valuenow') ?? el.value ?? null,
+      inPopover: !!el.closest(CONFIG.POPOVER_SELECTOR),
+      enhanced: popoverStates.has(el.closest(CONFIG.POPOVER_SELECTOR)),
+      hidden: !!el.closest('.liangc-native-hidden'),
+      isOurs: !!el.closest('.liangc-root'),
+      parentHTML: (el.parentElement?.outerHTML || '').slice(0, 300),
+    }));
+    console.log(`${TAG} 探测到 ${report.length} 个滑杆候选：`);
+    if (console.table) console.table(report);
+    else console.log(report);
+    return report;
+  }
+
+  // 导出全部弹层候选的 DOM 结构（在弹层打开状态下执行）
+  function dumpPopovers() {
+    const pops = [...document.querySelectorAll(CONFIG.POPOVER_SELECTOR)].filter((el) => el.isConnected);
+    if (!pops.length) return null;
+    const html = pops.map((el, i) => `---- 弹层候选 ${i} ----\n${el.outerHTML}`).join('\n\n');
+    console.log(html);
+    return html;
+  }
+
+  function restoreAll() {
+    for (const el of document.querySelectorAll('.liangc-native-hidden')) el.classList.remove('liangc-native-hidden');
+    for (const el of document.querySelectorAll('.liangc-relaxed')) el.classList.remove('liangc-relaxed');
+    for (const el of document.querySelectorAll('.liangc-root')) el.remove();
+    for (const popover of managedPopovers) popoverStates.delete(popover);
+    managedPopovers.clear();
+  }
+
+  // 在真实滑杆上逐个实测驱动策略（往反方向打一个值再还原），直接回答它吃哪种事件
+  function testDrive() {
+    let popover = null;
+    for (const p of managedPopovers) {
+      if (p.isConnected && resolveNativeSlider(p)) { popover = p; break; }
+    }
+    if (!popover) {
+      for (const p of document.querySelectorAll(CONFIG.POPOVER_SELECTOR)) {
+        if (resolveNativeSlider(p)) { popover = p; break; }
+      }
+    }
+    if (!popover) return '未找到含滑杆的弹层。请先点开「思考强度」弹层，再执行 testDrive。';
+    const el = resolveNativeSlider(popover);
+    const native = describeNativeSlider(popover);
+    if (!el || !native) return '弹层内未找到原生滑杆节点。';
+
+    const lines = [];
+    lines.push(`版本: v${VERSION}`);
+    lines.push(`量程: min=${native.min} max=${native.max} stops=${native.stops} step=${native.step}`);
+    lines.push(`节点: ${el.outerHTML.slice(0, 300)}`);
+    const chain = [];
+    let p = el.parentElement;
+    while (p && chain.length < 5) {
+      chain.push(`${p.tagName.toLowerCase()}${p.id ? '#' + p.id : ''} class=${String(p.className).slice(0, 80)}`);
+      p = p.parentElement;
+    }
+    lines.push(`父链:\n  ${chain.join('\n  ')}`);
+    const original = native.read();
+    lines.push(`原值: ${original}`);
+    const target = original >= (native.min + native.max) / 2 ? native.min : native.max;
+    lines.push(`试验目标值: ${target}`);
+
+    if (el instanceof HTMLInputElement && el.type === 'range') {
+      const ok = native.write(target);
+      lines.push(`input setter 驱动: ${ok ? 'PASS' : 'FAIL'}（试后读回=${native.read()}）`);
+    } else if (native._strategies) {
+      const kbOk = native._strategies.keyboard(el, target);
+      lines.push(`键盘步进: ${kbOk ? 'PASS' : 'FAIL'}（试后读回=${native.read()}）`);
+      if (!kbOk) {
+        const ptOk = native._strategies.pointer(el, target);
+        lines.push(`指针驱动: ${ptOk ? 'PASS' : 'FAIL'}（试后读回=${native.read()}）`);
+      }
+    }
+    const restoreOk = native.write(original);
+    lines.push(`还原原值 ${original}: ${restoreOk ? 'OK' : 'FAILED——请手动把滑杆拨回原位'}`);
+    return lines.join('\n');
+  }
+
+  // 结果浮层：控制台之外再给一份可一键复制的页面面板
+  function showResultOverlay(title, text) {
+    document.getElementById('liangc-result')?.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'liangc-result';
+    wrap.style.cssText =
+      'position:fixed;right:16px;bottom:16px;z-index:2147483647;width:min(620px,calc(100vw - 32px));' +
+      'max-height:80vh;overflow:auto;background:#1d1918;color:#e8e4d9;border-radius:12px;' +
+      'box-shadow:0 8px 40px rgb(0 0 0/45%);padding:12px;font:13px/1.5 -apple-system,"Segoe UI",sans-serif';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;font-weight:600';
+    const titleEl = document.createElement('span');
+    titleEl.textContent = title;
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = '复制';
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '关闭';
+    for (const btn of [copyBtn, closeBtn]) {
+      btn.style.cssText = 'border:1px solid #555;background:#2a2625;color:#e8e4d9;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px';
+    }
+    const btnBox = document.createElement('span');
+    btnBox.style.cssText = 'display:flex;gap:6px;flex:none';
+    btnBox.append(copyBtn, closeBtn);
+    head.append(titleEl, btnBox);
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.readOnly = true;
+    ta.style.cssText =
+      'width:100%;height:min(300px,50vh);box-sizing:border-box;font:11px/1.45 SFMono-Regular,Consolas,monospace;' +
+      'white-space:pre;overflow:auto;background:#12100f;color:#d8d4c9;border:1px solid #444;border-radius:8px;padding:8px';
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(ta.value);
+      } catch {
+        ta.select();
+        document.execCommand('copy');
+      }
+      copyBtn.textContent = '已复制 ✓';
+    };
+    closeBtn.onclick = () => wrap.remove();
+    wrap.append(head, ta);
+    (document.body || document.documentElement).appendChild(wrap);
+  }
+
+  function handleCommand(cmd) {
+    const stamp = `${TAG} v${VERSION} 命令「${cmd}」`;
+    console.log(stamp);
+    switch (cmd) {
+      case 'dump': {
+        const html = dumpPopovers();
+        if (html === null) {
+          showResultOverlay(stamp, '未找到弹层。请先点开「思考强度」弹层，再执行 dump。');
+          return;
+        }
+        showResultOverlay(`${stamp}（点「复制」后发给作者）`, html);
+        break;
+      }
+      case 'probe': {
+        const report = probeReport();
+        showResultOverlay(stamp, JSON.stringify(report, null, 2));
+        break;
+      }
+      case 'testDrive': {
+        const out = testDrive();
+        console.log(out);
+        showResultOverlay(`${stamp}（点「复制」后发给作者）`, out);
+        break;
+      }
+      case 'restore': {
+        restoreAll();
+        showResultOverlay(stamp, '已还原所有被替换的原生滑杆。');
+        break;
+      }
+      default:
+        showResultOverlay(stamp, '未知命令。可用：dump / probe / testDrive / restore');
+    }
+  }
+
+  // 命令桥：document 在所有世界间共享，任何控制台上下文派发都会到达
+  document.addEventListener('liang-command', (event) => {
+    const cmd = typeof event.detail === 'string' ? event.detail : event.detail && event.detail.cmd;
+    try {
+      handleCommand(cmd || 'help');
+    } catch (err) {
+      console.warn(TAG, '命令执行出错', err);
+    }
+  });
+
+  // 备用路径：隔离世界 window（Tampermonkey 下经 unsafeWindow 穿透到页面）
   const debugHost = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   debugHost.__liang = {
     version: VERSION,
     CONFIG,
     rescan: scan,
-    // 探测当前页面所有滑杆候选及其状态，反馈给作者校准时用
-    probe() {
-      const report = [...document.querySelectorAll(CONFIG.SLIDER_SELECTOR)].map((el, i) => ({
-        i,
-        kind: el.getAttribute('role') === 'slider' ? 'aria-slider' : el.tagName.toLowerCase(),
-        min: el.getAttribute('aria-valuemin') ?? el.min ?? null,
-        max: el.getAttribute('aria-valuemax') ?? el.max ?? null,
-        now: el.getAttribute('aria-valuenow') ?? el.value ?? null,
-        inPopover: !!el.closest(CONFIG.POPOVER_SELECTOR),
-        enhanced: popoverStates.has(el.closest(CONFIG.POPOVER_SELECTOR)),
-        hidden: !!el.closest('.liangc-native-hidden'),
-        isOurs: !!el.closest('.liangc-root'),
-        // 截一段父级结构，方便远程校准选择器/隐藏范围
-        parentHTML: (el.parentElement?.outerHTML || '').slice(0, 300),
-      }));
-      console.log(`${TAG} 探测到 ${report.length} 个滑杆候选：`);
-      if (console.table) console.table(report);
-      else console.log(report);
-      return report;
-    },
-    // 导出当前弹层 DOM 结构（在弹层打开状态下执行），远程校准布局用
-    dump() {
-      const popover = document.querySelector(CONFIG.POPOVER_SELECTOR);
-      if (!popover) {
-        console.warn(TAG, '未找到弹层，请先打开思考强度弹层再执行 __liang.dump()');
-        return null;
-      }
-      const html = popover.outerHTML;
-      console.log(html);
-      console.log('%c↑ 把这段 HTML 完整复制发给作者即可定位布局问题', 'color:#4d6bfe');
-      return html;
-    },
-    restoreAll() {
-      for (const el of document.querySelectorAll('.liangc-native-hidden')) el.classList.remove('liangc-native-hidden');
-      for (const el of document.querySelectorAll('.liangc-relaxed')) el.classList.remove('liangc-relaxed');
-      for (const el of document.querySelectorAll('.liangc-root')) el.remove();
-      for (const popover of managedPopovers) popoverStates.delete(popover);
-      managedPopovers.clear();
-    },
+    probe: probeReport,
+    dump: dumpPopovers,
+    testDrive,
+    restoreAll,
   };
 
-  console.log(`${TAG} 已注入 v${VERSION}，等待思考弹层出现…（控制台可用 __liang.probe() 自检）`);
+  console.log(`${TAG} 已注入 v${VERSION}，等待思考弹层出现…（控制台一行命令自检：document.dispatchEvent(new CustomEvent('liang-command',{detail:'testDrive'}))）`);
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true });
