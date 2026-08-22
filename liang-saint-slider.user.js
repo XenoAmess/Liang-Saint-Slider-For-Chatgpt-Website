@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.7
+// @version      1.0.8
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.7';
+  const VERSION = '1.0.8';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -287,43 +287,94 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
       const step = 1;
       const stops = max - min <= 64 ? Math.round(max - min) + 1 : 0;
       const readFrom = (el) => num(el.getAttribute('aria-valuenow'), min);
+      // React 换节点后一切读值都要走最新节点
+      const readNow = () => {
+        const el = resolveNativeSlider(popover);
+        return el ? readFrom(el) : min;
+      };
 
-      // 策略 1：Radix 式键盘步进（focus + Home/End 粗跳 + 方向键微调）
-      const driveByKeyboard = (el, target) => {
+      /** ---------- 驱动工具 ---------- */
+
+      // 键盘宿主：thumb 可能是 aria-hidden 的纯摆设（ChatGPT 就是），真正的
+      // 键盘监听挂在带 aria-keyshortcuts 的 menuitem 祖先上
+      const findShortcutHost = (el) => {
+        let node = el;
+        while (node && node !== popover) {
+          if (node.getAttribute && node.getAttribute('aria-keyshortcuts')) return node;
+          node = node.parentElement;
+        }
+        const item = el.closest('[role="menuitem"]');
+        return item && popover.contains(item) ? item : null;
+      };
+
+      const pressKeyOn = (targetEl, target) => {
         try {
-          el.focus({ preventScroll: true });
+          targetEl.focus({ preventScroll: true });
         } catch {
-          el.focus();
+          targetEl.focus();
         }
         const press = (key) =>
-          el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
-        let current = readFrom(el);
+          targetEl.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
+        let current = readNow();
         if (current === target) return true;
         if (target === min) {
           press('Home');
-          if (readFrom(el) === target) return true;
+          if (readNow() === target) return true;
         } else if (target === max) {
           press('End');
-          if (readFrom(el) === target) return true;
+          if (readNow() === target) return true;
         }
         let guard = 0;
         while (guard++ < 96) {
-          current = readFrom(el);
+          current = readNow();
           if (current === target) return true;
           press(current < target ? 'ArrowRight' : 'ArrowLeft');
-          let after = readFrom(el);
+          const after = readNow();
           if (after === current) {
             press(current < target ? 'ArrowUp' : 'ArrowDown');
-            after = readFrom(el);
-            if (after === current) return false; // 键盘驱动无效
+            if (readNow() === current) return false; // 该宿主不吃键盘
           }
         }
-        return readFrom(el) === target;
+        return readNow() === target;
       };
 
-      // 策略 2：模拟指针。ChatGPT 的滑杆未必响应键盘——多数自定义滑杆反而
-      // 只认 pointer/mouse。先按轨道比例位置直接点（jump-to-position 实现），
-      // 不行再按住 thumb 拖过去。指针和鼠标事件成对发，兼容两种监听习惯。
+      // React fiber 直调：合成事件若被 isTrusted / 焦点门控拦掉，就跳过事件系统，
+      // 直接调元素 __reactProps$ 上的 onKeyDown（绝大多数实现不查 isTrusted）
+      const reactPropsOf = (el) => {
+        for (const key of Object.keys(el)) {
+          if (key.startsWith('__reactProps$')) return el[key];
+        }
+        return null;
+      };
+      const fakeKeyEvent = (key, el) => ({
+        type: 'keydown', key, code: key, bubbles: true, cancelable: true, isTrusted: true,
+        target: el, currentTarget: el, nativeEvent: { key, code: key, bubbles: true, cancelable: true },
+        preventDefault() {}, stopPropagation() {}, persist() {},
+        defaultPrevented: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
+      });
+      const reactKeyTo = (el, target) => {
+        const props = reactPropsOf(el);
+        if (!props || typeof props.onKeyDown !== 'function') return false;
+        const press = (key) => {
+          try {
+            props.onKeyDown(fakeKeyEvent(key, el));
+          } catch {
+            /* 处理器内部引用缺失字段时放弃该策略 */
+          }
+        };
+        if (target === min) press('Home');
+        else if (target === max) press('End');
+        let guard = 0;
+        while (guard++ < 96) {
+          const current = readNow();
+          if (current === target) return true;
+          press(current < target ? 'ArrowRight' : 'ArrowLeft');
+          if (readNow() === current) return false;
+        }
+        return readNow() === target;
+      };
+
+      // 指针模拟：轨道比例位置点击跳跃 → thumb 拖拽。pointer/mouse 成对派发。
       const firePointer = (el, type, x, y, buttons) => {
         const init = {
           bubbles: true, cancelable: true, composed: true, view: window,
@@ -352,7 +403,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         // 试 1：轨道上直接点
         firePointer(track, 'pointerdown', x, y, 1);
         firePointer(track, 'pointerup', x, y, 0);
-        if (readFrom(el) === target) return true;
+        if (readNow() === target) return true;
         // 试 2：按住 thumb 拖到目标位置
         const thumbRect = el.getBoundingClientRect();
         const sx = thumbRect.left + thumbRect.width / 2;
@@ -362,25 +413,69 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
           firePointer(el, 'pointermove', sx + ((x - sx) * i) / 4, sy, 1);
         }
         firePointer(el, 'pointerup', x, sy, 0);
-        return readFrom(el) === target;
+        return readNow() === target;
       };
 
-      return {
-        min, max, step, stops,
-        _strategies: { keyboard: driveByKeyboard, pointer: driveByPointer }, // testDrive 用
-        read: () => {
-          const el = resolveNativeSlider(popover);
-          return el ? readFrom(el) : min;
+      /** ---------- 策略瀑布（按真实站点命中概率排序） ---------- */
+      const strategies = [
+        {
+          name: '键盘@快捷键宿主',
+          available: (el) => !!findShortcutHost(el),
+          run: (el, target) => pressKeyOn(findShortcutHost(el), target),
         },
+        {
+          name: 'ReactProps.onKeyDown@快捷键宿主',
+          available: (el) => {
+            const host = findShortcutHost(el);
+            return !!(host && typeof reactPropsOf(host)?.onKeyDown === 'function');
+          },
+          run: (el, target) => reactKeyTo(findShortcutHost(el), target),
+        },
+        {
+          name: 'ReactProps.onKeyDown@thumb',
+          available: (el) => typeof reactPropsOf(el)?.onKeyDown === 'function',
+          run: (el, target) => reactKeyTo(el, target),
+        },
+        {
+          name: '键盘@thumb',
+          available: () => true,
+          run: (el, target) => pressKeyOn(el, target),
+        },
+        {
+          name: '指针@轨道',
+          available: () => true,
+          run: (el, target) => driveByPointer(el, target),
+        },
+      ];
+
+      const desc = {
+        min, max, step, stops,
+        _strategies: strategies, // testDrive 用
+        _memo: null, // 上次成功的策略，拖动时优先复用
+        read: readNow,
         write: (target) => {
           const el = resolveNativeSlider(popover);
           if (!el || !el.isConnected) return false;
-          if (readFrom(el) === target) return true;
-          if (driveByKeyboard(el, target)) return true;
-          if (driveByPointer(el, target)) return true;
-          return readFrom(el) === target;
+          if (readNow() === target) return true;
+          const tryStrategy = (s) => {
+            try {
+              return s.run(el, target);
+            } catch {
+              return false;
+            }
+          };
+          if (desc._memo && desc._memo.available(el) && tryStrategy(desc._memo)) return true;
+          for (const s of strategies) {
+            if (s === desc._memo || !s.available(el)) continue;
+            if (tryStrategy(s)) {
+              desc._memo = s;
+              return true;
+            }
+          }
+          return readNow() === target;
         },
       };
+      return desc;
     }
     return null;
   }
@@ -511,7 +606,9 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     };
 
     range.addEventListener('input', () => api.setLevel(Number(range.value), { commit: true }));
+    // 我们的滑杆事件绝不能冒泡到弹层宿主（它的 menuitem 也监听方向键/点击）
     range.addEventListener('pointerdown', (event) => event.stopPropagation());
+    range.addEventListener('keydown', (event) => event.stopPropagation());
 
     api.syncFromNative();
     preloadAll(level);
@@ -531,18 +628,21 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
   const failedPopovers = new WeakSet(); // 自检失败的弹层，不再反复尝试
 
   // 找到要隐藏的原生滑杆组件根：thumb 外常被裹多层定位包装（只藏第一层会留下
-  // 可见的轨道/thumb 残影），向上爬过纯包装节点，把整个滑杆组件一起藏掉。
-  // 爬升条件刻意保守（高度像一行滑杆、子节点少、不越过弹层容器），宁可少藏不可误伤。
+  // 可见的轨道/可视 thumb 残影——真实站点教训），向上爬过纯结构节点，
+  // 把整个滑杆组件一起藏掉。爬升守卫：子节点少、无文字内容、不含滑杆以外的
+  // 交互控件、不越过弹层容器——宁可少藏不可误伤。
   function nativeRootOf(sliderEl, popover) {
     let root = sliderEl instanceof HTMLInputElement ? sliderEl : sliderEl.parentElement || sliderEl;
     let node = root.parentElement;
     let guard = 0;
-    while (node && node !== popover && node !== document.body && guard < 3) {
-      const rect = node.getBoundingClientRect();
-      // 已被我们 display:none 的节点量出来高度为 0，那不是「未布局」，照常爬过
-      const hiddenByUs = node.classList.contains('liangc-native-hidden');
-      if (!hiddenByUs && (rect.height === 0 || rect.height > 56)) break; // 已是更大的容器
-      if (node.children.length > 2) break; // 含多个并列内容，再爬可能误伤
+    const hasOtherControls = (container) =>
+      [...container.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"]')].some(
+        (el) => el !== sliderEl && !sliderEl.contains(el),
+      );
+    while (node && node !== popover && node !== document.body && guard < 4) {
+      if (node.children.length > 3) break; // 并列内容太多，再爬可能误伤
+      if ((node.textContent || '').trim().length > 0) break; // 带文字的容器里还有别的信息
+      if (hasOtherControls(node)) break; // 还有别的按钮/链接等控件
       root = node;
       node = node.parentElement;
       guard += 1;
@@ -550,17 +650,28 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     return root;
   }
 
-  // 隐藏当前原生滑杆 + 保证面板挂在它前面 + 放宽弹层祖先链限制（enhance/heal 共用）
+  // 隐藏当前原生滑杆 + 保证面板挂得正确 + 放宽弹层祖先链限制（enhance/heal 共用）
   function hideNativeAndRelax(popover, sliderEl, panelRoot) {
     const nativeRoot = nativeRootOf(sliderEl, popover);
     nativeRoot.classList.add('liangc-native-hidden');
-    // 重插面板时，宿主绝不能落在已被我们隐藏的子树里（否则面板跟着消失）
-    const host = nativeRoot.parentElement;
-    if (host && !host.closest('.liangc-native-hidden')) {
-      if (panelRoot.parentElement !== host) host.insertBefore(panelRoot, nativeRoot);
-    } else if (!popover.contains(panelRoot)) {
-      popover.appendChild(panelRoot); // 兜底：宿主正被 React 拆改，至少保住面板
+
+    // 面板必须落在「未被隐藏的块级容器」里——塞进 inline span 必然布局歪掉
+    // （真实站点教训：面板曾被插进 inline 的滑杆根 span，整行排版崩坏）
+    let host = nativeRoot.parentElement;
+    while (host && host !== popover && host !== document.body) {
+      const display = host.getBoundingClientRect && getComputedStyle(host).display;
+      const inline = display === 'inline' || display === 'inline-flex' || display === 'contents';
+      if (!inline && !host.closest('.liangc-native-hidden')) break;
+      host = host.parentElement;
     }
+    if (!host || host === document.body) host = popover;
+    // 在 host 内插到「包含原生根的那条链」的最顶层节点之前
+    let before = nativeRoot;
+    while (before.parentElement && before.parentElement !== host) before = before.parentElement;
+    if (panelRoot.parentElement !== host || panelRoot.nextElementSibling !== before) {
+      host.insertBefore(panelRoot, before);
+    }
+
     let ancestor = panelRoot.parentElement;
     while (ancestor) {
       ancestor.classList.add('liangc-relaxed');
@@ -746,15 +857,31 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
       const ok = native.write(target);
       lines.push(`input setter 驱动: ${ok ? 'PASS' : 'FAIL'}（试后读回=${native.read()}）`);
     } else if (native._strategies) {
-      const kbOk = native._strategies.keyboard(el, target);
-      lines.push(`键盘步进: ${kbOk ? 'PASS' : 'FAIL'}（试后读回=${native.read()}）`);
-      if (!kbOk) {
-        const ptOk = native._strategies.pointer(el, target);
-        lines.push(`指针驱动: ${ptOk ? 'PASS' : 'FAIL'}（试后读回=${native.read()}）`);
+      for (const s of native._strategies) {
+        if (!s.available(el)) {
+          lines.push(`${s.name}: SKIP（条件不满足）`);
+          continue;
+        }
+        let ok = false;
+        try {
+          ok = s.run(el, target);
+        } catch (err) {
+          lines.push(`${s.name}: ERROR ${err && err.message}`);
+          continue;
+        }
+        lines.push(`${s.name}: ${ok ? 'PASS ✓' : 'FAIL ✗'}（试后读回=${native.read()}）`);
+        // 每个策略试完都还原，互不污染
+        if (native.read() !== original) {
+          const r = native.write(original);
+          if (!r) {
+            lines.push(`  还原到 ${original} 失败，中止后续策略——请手动把滑杆拨回原位`);
+            return lines.join('\n');
+          }
+        }
       }
     }
     const restoreOk = native.write(original);
-    lines.push(`还原原值 ${original}: ${restoreOk ? 'OK' : 'FAILED——请手动把滑杆拨回原位'}`);
+    lines.push(`最终还原 ${original}: ${restoreOk ? 'OK' : 'FAILED——请手动拨回'}`);
     return lines.join('\n');
   }
 
