@@ -23,7 +23,7 @@
 
 ### 方式一：下载 Release（推荐，无需构建）
 
-1. 到 [Releases](https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/releases) 下载最新的 `liang-saint-slider-extension-vX.X.X.zip`，解压；
+1. 到 [Releases](https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website/releases) 下载最新的 `liang-saint-slider-extension-vX.X.X.zip`，解压；
 2. 打开 `chrome://extensions`，右上角开启「开发者模式」；
 3. 点「加载未打包的扩展程序」，选择解压出的文件夹；
 4. 硬刷新（Ctrl+Shift+R）chatgpt.com，点开思考强度弹层即可看到变祖器。
@@ -31,8 +31,8 @@
 ### 方式二：从源码构建
 
 ```sh
-git clone https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey.git
-cd Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
+git clone https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website.git
+cd Liang-Saint-Slider-For-Chatgpt-Website
 npm run build:extension   # 生成 dist/extension/
 ```
 

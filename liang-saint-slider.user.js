@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
-// @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
+// @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website
 // @version      1.0.10
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
-// @homepageURL  https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @updateURL    https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js
-// @downloadURL  https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/liang-saint-slider.user.js
+// @homepageURL  https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website
+// @updateURL    https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website/main/liang-saint-slider.user.js
+// @downloadURL  https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website/main/liang-saint-slider.user.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_addStyle
@@ -48,8 +48,8 @@
     // 第一项即可命中；未公开时会自动回退到上游项目的 GitHub Pages。
     // 本地开发时可在加载本脚本前设置 window.__LIANG_FRAME_BASE__ 覆盖（见 dev/mock.html）。
     FRAME_BASES: [
-      'https://cdn.jsdelivr.net/gh/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey@main/frames/',
-      'https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey/main/frames/',
+      'https://cdn.jsdelivr.net/gh/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website@main/frames/',
+      'https://raw.githubusercontent.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website/main/frames/',
       'https://lichtspektrum.github.io/liang-intensity-calibrator/frames/',
       'https://raw.githubusercontent.com/Lichtspektrum/liang-intensity-calibrator/main/public/frames/',
     ],
