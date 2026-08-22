@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.9
+// @version      1.0.10
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.9';
+  const VERSION = '1.0.10';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -552,7 +552,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     let level = 0;
     let firstFrameShown = false;
     let driveWarned = false; // 驱动失败告警只报一次，避免刷屏
-    let commitPending = null; // 拖动中合并写入：只记最新目标值
+    let pendingTarget = null; // 拖动中合并写入：只记最新目标值
     let commitInFlight = false;
     const showFrame = (img) => {
       draw(img);
@@ -675,6 +675,10 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
       );
     while (node && node !== popover && node !== document.body && guard < 4) {
       if (node.children.length > 3) break; // 并列内容太多，再爬可能误伤
+      // 键盘宿主/菜单项是功能容器，藏了会把键盘监听和我们的面板一起埋了
+      const role = node.getAttribute && node.getAttribute('role');
+      if (role === 'menuitem' || role === 'menu' || role === 'menuitemcheckbox' || role === 'menuitemradio') break;
+      if (node.getAttribute && node.getAttribute('aria-keyshortcuts')) break;
       if ((node.textContent || '').trim().length > 0) break; // 带文字的容器里还有别的信息
       if (hasOtherControls(node)) break; // 还有别的按钮/链接等控件
       root = node;
@@ -984,7 +988,8 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         break;
       }
       case 'testDrive': {
-        showResultOverlay(stamp, '正在真实滑杆上逐策略实测（会短暂拨动档位，结束后自动还原）…');
+        // 实测全程不能弹浮层抢焦点——Radix 菜单失焦即关，节点会被拆掉（真实站点教训：
+        // 提前弹层导致还原阶段菜单已关闭，写入打在死节点上，误判「还原失败」）
         testDrive().then((out) => {
           console.log(out);
           showResultOverlay(`${stamp}（点「复制」后发给作者）`, out);
