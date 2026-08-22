@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         滑动变祖器 · ChatGPT 思考滑杆 (Liang Saint Slider for ChatGPT)
 // @namespace    https://github.com/XenoAmess/Liang-Saint-Slider-For-Chatgpt-Website-Tampermonkey
-// @version      1.0.8
+// @version      1.0.9
 // @description  把 chatgpt.com 的思考强度滑杆替换为 31 级「滑动变祖器」：从小难梁一路滑到梁祖。底层仍驱动原生滑杆，功能不丢。
 // @author       XenoAmess
 // @license      MIT
@@ -82,7 +82,7 @@
   const LIANG_STAGE_SPAN = 5;
   const LIANG_STAGES = ['小难梁', '牢梁', '梁子', '梁圣', '梁神', '梁祖'];
   const TAG = '[滑动变祖器]';
-  const VERSION = '1.0.8';
+  const VERSION = '1.0.9';
 
   const clampLevel = (level) => Math.max(0, Math.min(LIANG_MAX_LEVEL, level));
   const stageForLevel = (level) =>
@@ -270,13 +270,13 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         },
         write: (v) => {
           const el = resolveNativeSlider(popover);
-          if (!(el instanceof HTMLInputElement) || !el.isConnected) return false;
-          if (num(el.value, min) === v) return true; // 值未变不发事件，避免无谓打扰宿主逻辑
+          if (!(el instanceof HTMLInputElement) || !el.isConnected) return Promise.resolve(false);
+          if (num(el.value, min) === v) return Promise.resolve(true); // 值未变不发事件，避免无谓打扰宿主逻辑
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
           setter.call(el, String(v));
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
-          return num(el.value, min) === v;
+          return Promise.resolve(num(el.value, min) === v);
         },
       };
     }
@@ -292,6 +292,10 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         const el = resolveNativeSlider(popover);
         return el ? readFrom(el) : min;
       };
+      // React 18+ 的状态更新是批量异步落地的：派事件/调 props 后必须让出一个
+      // 宏任务再读回，否则读到旧值误判策略失败（真实站点教训：误判会让瀑布
+      // 继续乱锤后面的策略，焦点反复横跳、拖动被打断）
+      const settle = () => new Promise((r) => setTimeout(r, 0));
 
       /** ---------- 驱动工具 ---------- */
 
@@ -307,39 +311,35 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         return item && popover.contains(item) ? item : null;
       };
 
-      const pressKeyOn = (targetEl, target) => {
-        try {
-          targetEl.focus({ preventScroll: true });
-        } catch {
-          targetEl.focus();
-        }
-        const press = (key) =>
-          targetEl.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
-        let current = readNow();
-        if (current === target) return true;
+      // 统一步进骨架：fire(Home/End/方向键) → settle → 读回；一步不动即判死
+      const driveBySteps = async (fire, target) => {
         if (target === min) {
-          press('Home');
+          await fire('Home');
+          await settle();
           if (readNow() === target) return true;
         } else if (target === max) {
-          press('End');
+          await fire('End');
+          await settle();
           if (readNow() === target) return true;
         }
         let guard = 0;
-        while (guard++ < 96) {
-          current = readNow();
+        while (guard++ < max - min + 2) {
+          const current = readNow();
           if (current === target) return true;
-          press(current < target ? 'ArrowRight' : 'ArrowLeft');
-          const after = readNow();
-          if (after === current) {
-            press(current < target ? 'ArrowUp' : 'ArrowDown');
-            if (readNow() === current) return false; // 该宿主不吃键盘
-          }
+          await fire(current < target ? 'ArrowRight' : 'ArrowLeft');
+          await settle();
+          if (readNow() === current) return false; // 该策略一步都走不动 → 无效
         }
         return readNow() === target;
       };
 
+      const keyFireOn = (targetEl) => (key) => {
+        targetEl.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true, view: window }));
+        return Promise.resolve();
+      };
+
       // React fiber 直调：合成事件若被 isTrusted / 焦点门控拦掉，就跳过事件系统，
-      // 直接调元素 __reactProps$ 上的 onKeyDown（绝大多数实现不查 isTrusted）
+      // 直接调元素 __reactProps$ 上的 onKeyDown（不抢焦点，绝大多数实现不查 isTrusted）
       const reactPropsOf = (el) => {
         for (const key of Object.keys(el)) {
           if (key.startsWith('__reactProps$')) return el[key];
@@ -352,26 +352,17 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         preventDefault() {}, stopPropagation() {}, persist() {},
         defaultPrevented: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
       });
-      const reactKeyTo = (el, target) => {
+      const reactFireOn = (el) => {
         const props = reactPropsOf(el);
-        if (!props || typeof props.onKeyDown !== 'function') return false;
-        const press = (key) => {
+        if (!props || typeof props.onKeyDown !== 'function') return null;
+        return (key) => {
           try {
             props.onKeyDown(fakeKeyEvent(key, el));
           } catch {
-            /* 处理器内部引用缺失字段时放弃该策略 */
+            /* 处理器内部引用缺失字段时由读回判死 */
           }
+          return Promise.resolve();
         };
-        if (target === min) press('Home');
-        else if (target === max) press('End');
-        let guard = 0;
-        while (guard++ < 96) {
-          const current = readNow();
-          if (current === target) return true;
-          press(current < target ? 'ArrowRight' : 'ArrowLeft');
-          if (readNow() === current) return false;
-        }
-        return readNow() === target;
       };
 
       // 指针模拟：轨道比例位置点击跳跃 → thumb 拖拽。pointer/mouse 成对派发。
@@ -393,7 +384,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         }
         return el.parentElement || el;
       };
-      const driveByPointer = (el, target) => {
+      const driveByPointer = async (el, target) => {
         const track = pickTrack(el);
         const rect = track.getBoundingClientRect();
         if (rect.width < 10) return false;
@@ -403,6 +394,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         // 试 1：轨道上直接点
         firePointer(track, 'pointerdown', x, y, 1);
         firePointer(track, 'pointerup', x, y, 0);
+        await settle();
         if (readNow() === target) return true;
         // 试 2：按住 thumb 拖到目标位置
         const thumbRect = el.getBoundingClientRect();
@@ -413,33 +405,42 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
           firePointer(el, 'pointermove', sx + ((x - sx) * i) / 4, sy, 1);
         }
         firePointer(el, 'pointerup', x, sy, 0);
+        await settle();
         return readNow() === target;
       };
 
-      /** ---------- 策略瀑布（按真实站点命中概率排序） ---------- */
+      /** ---------- 策略瀑布（reactProps 不抢焦点排最前，指针垫底） ---------- */
       const strategies = [
-        {
-          name: '键盘@快捷键宿主',
-          available: (el) => !!findShortcutHost(el),
-          run: (el, target) => pressKeyOn(findShortcutHost(el), target),
-        },
         {
           name: 'ReactProps.onKeyDown@快捷键宿主',
           available: (el) => {
             const host = findShortcutHost(el);
-            return !!(host && typeof reactPropsOf(host)?.onKeyDown === 'function');
+            return !!(host && reactFireOn(host));
           },
-          run: (el, target) => reactKeyTo(findShortcutHost(el), target),
+          run: (el, target) => driveBySteps(reactFireOn(findShortcutHost(el)), target),
+        },
+        {
+          name: '键盘@快捷键宿主',
+          available: (el) => !!findShortcutHost(el),
+          run: (el, target) => {
+            const host = findShortcutHost(el);
+            try {
+              host.focus({ preventScroll: true });
+            } catch {
+              host.focus();
+            }
+            return driveBySteps(keyFireOn(host), target);
+          },
         },
         {
           name: 'ReactProps.onKeyDown@thumb',
-          available: (el) => typeof reactPropsOf(el)?.onKeyDown === 'function',
-          run: (el, target) => reactKeyTo(el, target),
+          available: (el) => !!reactFireOn(el),
+          run: (el, target) => driveBySteps(reactFireOn(el), target),
         },
         {
           name: '键盘@thumb',
           available: () => true,
-          run: (el, target) => pressKeyOn(el, target),
+          run: (el, target) => driveBySteps(keyFireOn(el), target),
         },
         {
           name: '指针@轨道',
@@ -455,24 +456,27 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         read: readNow,
         write: (target) => {
           const el = resolveNativeSlider(popover);
-          if (!el || !el.isConnected) return false;
-          if (readNow() === target) return true;
-          const tryStrategy = (s) => {
-            try {
-              return s.run(el, target);
-            } catch {
-              return false;
+          if (!el || !el.isConnected) return Promise.resolve(false);
+          if (readNow() === target) return Promise.resolve(true);
+          return (async () => {
+            const tryOne = async (s) => {
+              if (!s.available(el)) return false;
+              try {
+                return await s.run(el, target);
+              } catch {
+                return false;
+              }
+            };
+            if (desc._memo && (await tryOne(desc._memo))) return true;
+            for (const s of strategies) {
+              if (s === desc._memo) continue;
+              if (await tryOne(s)) {
+                desc._memo = s;
+                return true;
+              }
             }
-          };
-          if (desc._memo && desc._memo.available(el) && tryStrategy(desc._memo)) return true;
-          for (const s of strategies) {
-            if (s === desc._memo || !s.available(el)) continue;
-            if (tryStrategy(s)) {
-              desc._memo = s;
-              return true;
-            }
-          }
-          return readNow() === target;
+            return readNow() === target;
+          })();
         },
       };
       return desc;
@@ -548,6 +552,8 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     let level = 0;
     let firstFrameShown = false;
     let driveWarned = false; // 驱动失败告警只报一次，避免刷屏
+    let commitPending = null; // 拖动中合并写入：只记最新目标值
+    let commitInFlight = false;
     const showFrame = (img) => {
       draw(img);
       if (!firstFrameShown) {
@@ -584,14 +590,42 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         } else {
           target = native.min + (level / LIANG_MAX_LEVEL) * (native.max - native.min);
         }
-        const ok = native.write(target);
-        if (!ok && !driveWarned) {
-          driveWarned = true;
-          console.warn(TAG, '驱动原生滑杆失败，已跳过本次写入（后续拖动会自动重试）');
-        } else if (ok) {
-          driveWarned = false;
-        }
-        return ok;
+        pendingTarget = target;
+        if (commitInFlight) return true; // 在飞的写完会接着写最新目标，不堆叠
+        commitInFlight = true;
+        // 驱动策略可能 focus 别的元素（键盘宿主需要焦点），写完必须还回来，
+        // 否则我们 range 的拖动被焦点抢断（真实站点教训：滑到档边界就失焦）
+        const focusOwner = document.activeElement;
+        (async () => {
+          try {
+            while (pendingTarget !== null) {
+              const t = pendingTarget;
+              pendingTarget = null;
+              const ok = await native.write(t);
+              if (!ok && !driveWarned) {
+                driveWarned = true;
+                console.warn(TAG, '驱动原生滑杆失败，已跳过本次写入（后续拖动会自动重试）');
+              } else if (ok) {
+                driveWarned = false;
+              }
+            }
+          } finally {
+            commitInFlight = false;
+            if (
+              focusOwner &&
+              root.contains(focusOwner) &&
+              document.activeElement !== focusOwner &&
+              focusOwner.isConnected
+            ) {
+              try {
+                focusOwner.focus({ preventScroll: true });
+              } catch {
+                /* 焦点归还不影响功能 */
+              }
+            }
+          }
+        })();
+        return true;
       },
       syncFromNative() {
         const value = native.read();
@@ -691,17 +725,19 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     const panel = buildPanel(native);
     hideNativeAndRelax(popover, sliderEl, panel.root);
 
-    // 写一次与原生当前值相同的位置做自检；失败则回滚，免得把功能藏没
-    if (!native.write(native.read())) {
-      console.warn(TAG, '原生滑杆不可驱动，已还原原样', sliderEl);
-      nativeRoot.classList.remove('liangc-native-hidden');
-      panel.root.remove();
-      failedPopovers.add(popover);
-      return;
-    }
-    popoverStates.set(popover, { native, panel });
-    managedPopovers.add(popover);
-    console.debug(TAG, '已接管思考滑杆', sliderEl);
+    // 写一次与原生当前值相同的位置做自检（异步）；失败则回滚，免得把功能藏没
+    Promise.resolve(native.write(native.read())).then((ok) => {
+      if (ok) {
+        popoverStates.set(popover, { native, panel });
+        managedPopovers.add(popover);
+        console.debug(TAG, '已接管思考滑杆', sliderEl);
+      } else {
+        console.warn(TAG, '原生滑杆不可驱动，已还原原样', sliderEl);
+        nativeRoot.classList.remove('liangc-native-hidden');
+        panel.root.remove();
+        failedPopovers.add(popover);
+      }
+    });
   }
 
   // 自愈：React 重渲染换了滑杆节点后重新隐藏；面板被摘掉则重新挂回
@@ -822,7 +858,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
   }
 
   // 在真实滑杆上逐个实测驱动策略（往反方向打一个值再还原），直接回答它吃哪种事件
-  function testDrive() {
+  async function testDrive() {
     let popover = null;
     for (const p of managedPopovers) {
       if (p.isConnected && resolveNativeSlider(p)) { popover = p; break; }
@@ -854,7 +890,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
     lines.push(`试验目标值: ${target}`);
 
     if (el instanceof HTMLInputElement && el.type === 'range') {
-      const ok = native.write(target);
+      const ok = await native.write(target);
       lines.push(`input setter 驱动: ${ok ? 'PASS' : 'FAIL'}（试后读回=${native.read()}）`);
     } else if (native._strategies) {
       for (const s of native._strategies) {
@@ -864,7 +900,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         }
         let ok = false;
         try {
-          ok = s.run(el, target);
+          ok = await s.run(el, target);
         } catch (err) {
           lines.push(`${s.name}: ERROR ${err && err.message}`);
           continue;
@@ -872,7 +908,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         lines.push(`${s.name}: ${ok ? 'PASS ✓' : 'FAIL ✗'}（试后读回=${native.read()}）`);
         // 每个策略试完都还原，互不污染
         if (native.read() !== original) {
-          const r = native.write(original);
+          const r = await native.write(original);
           if (!r) {
             lines.push(`  还原到 ${original} 失败，中止后续策略——请手动把滑杆拨回原位`);
             return lines.join('\n');
@@ -880,7 +916,7 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         }
       }
     }
-    const restoreOk = native.write(original);
+    const restoreOk = await native.write(original);
     lines.push(`最终还原 ${original}: ${restoreOk ? 'OK' : 'FAILED——请手动拨回'}`);
     return lines.join('\n');
   }
@@ -948,9 +984,11 @@ input[type="range"].liangc-range{width:100%;margin:0;accent-color:#4d6bfe;cursor
         break;
       }
       case 'testDrive': {
-        const out = testDrive();
-        console.log(out);
-        showResultOverlay(`${stamp}（点「复制」后发给作者）`, out);
+        showResultOverlay(stamp, '正在真实滑杆上逐策略实测（会短暂拨动档位，结束后自动还原）…');
+        testDrive().then((out) => {
+          console.log(out);
+          showResultOverlay(`${stamp}（点「复制」后发给作者）`, out);
+        });
         break;
       }
       case 'restore': {
