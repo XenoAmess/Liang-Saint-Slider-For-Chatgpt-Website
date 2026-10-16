@@ -5,7 +5,8 @@
   "main": "liang-saint-slider.user.js",
   "scripts": {
     "dev": "node dev/server.js",
-    "build:extension": "node dev/build-extension.mjs"
+    "build:extension": "node dev/build-extension.mjs",
+    "package:store": "node dev/package-store.mjs"
   },
   "keywords": [
     "browser-extension",

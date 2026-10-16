@@ -75,6 +75,16 @@ npm run dev
 
 `dev/mock.html` 模拟了 ChatGPT 弹层结构（Radix 风格 `role="slider"` 变体 + `input[type=range]` 变体 + 苛刻弹层变体 + 纯指针滑杆变体 + React 换节点回放），无需登录 ChatGPT 即可离线验证脚本逻辑；`?autotest=1` 跑回归断言并把结果写进 `document.title`。
 
+## Chrome Web Store 发布
+
+```sh
+npm run package:store
+```
+
+需要本机安装 Chrome、`zip` 和 `unzip`（可用 `CHROME_BIN` 指定浏览器）。命令会构建扩展，并在 `dist/chrome-web-store/` 生成根目录含 `manifest.json` 的上传 ZIP、1280×800 真实效果截图、440×280 宣传图、图标和填写文案。商店图片和文案在后台分别上传，不放进扩展 ZIP。
+
+完整字段、隐私披露和审核测试说明见 [上架材料](store/LISTING.zh-CN.md)，数据处理方式见 [隐私政策](PRIVACY.md)。是否已发布以 Chrome Web Store 后台审核状态为准。
+
 ## 素材与致谢
 
 本项目**源代码**以 [MIT 协议](LICENSE) 发布。
