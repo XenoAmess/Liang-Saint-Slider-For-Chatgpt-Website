@@ -85,6 +85,8 @@ npm run package:store
 
 完整字段、隐私披露和审核测试说明见 [上架材料](store/LISTING.zh-CN.md)，数据处理方式见 [隐私政策](PRIVACY.md)。是否已发布以 Chrome Web Store 后台审核状态为准。
 
+本次提交的项目 ID、审核后台入口与发布设置见 [Chrome Web Store 提交记录](store/SUBMISSION.md)。
+
 ## 素材与致谢
 
 本项目**源代码**以 [MIT 协议](LICENSE) 发布。
