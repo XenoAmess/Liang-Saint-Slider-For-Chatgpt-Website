@@ -1,5 +1,21 @@
 # Chrome Web Store 提交记录
 
+最新确认：**2026-10-17 11:36（Asia/Shanghai），修订商店说明后已重新提交，状态为 Pending review，审核通过后自动发布。**
+
+## 2026-10-17：处理 Yellow Argon 拒审并重新提交
+
+首次提交因 Keyword Spam 被拒（后台类别 Spam and Placement in the Store，引用 ID：`Yellow Argon`）。通知明确指出商店详细说明中逐项罗列的阶段名称，要求删除多余关键词后重新提交。
+
+已将商店详细说明从 623 字缩短为 348 字，移除所有阶段名称枚举、重复宣传语和非必要关键词，仅保留实际功能、操作步骤、使用条件与隐私 / 素材说明；单一用途描述也同步精简。修改保存在 [上架材料](LISTING.zh-CN.md)，对应提交为 `b1f162b`。
+
+已在原项目 `gghkhcmbecfllakidknoellieenkbobg` 保存修订，重新加载后台后确认说明与仓库文案完全一致，再提交审核。Google 显示提交成功，状态页随后确认 **Pending review**。本次只修改商店说明和单一用途文案，沿用原有 v1.0.10 扩展包，运行逻辑、权限、图片资源和版本号均未更改。
+
+语法检查通过；模拟页 25 项断言全部通过（`ALL_PASS`）。本地状态快照保存在 `dist/chrome-web-store/resubmission-2026-10-17.json`，不随源码提交。后续结果以审核后台为准。
+
+政策依据：[Listing Requirements](https://developer.chrome.com/docs/webstore/program-policies/listing-requirements/) 要求以清晰的功能说明取代多余关键词列表；[审核问题排查文档](https://developer.chrome.com/docs/webstore/troubleshooting/) 中的 Keyword stuffing 对应 `Yellow Argon`。
+
+## 2026-10-16：首次提交
+
 2026-10-16 17:46（Asia/Shanghai）确认：v1.0.10 已提交 Google 审核，后台状态为 **Pending review**，并已勾选 **审核通过后自动发布**。这是本次提交时的状态记录；后续状态以商店后台为准。
 
 | 项目 | 记录 |
